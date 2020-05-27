@@ -22,16 +22,11 @@ NOT_FOUND = 404
 CREATED = 201
 OK = 200
 
-app = Flask(__name__)
-app.debug = True
-manager = Manager(app)
-
 #GLOBAL VARS
 # keys: non persistent dictionary
 # view: empty view containing socket 
-# addresses of running replicas
-# vector clock for enforcing
-# causal consistency
+# replicasAlive: addresses of running replicas
+# vectorClock: vector clock for enforcing causal consistency
 keys = {}
 viewList = {}
 replicasAlive = []
@@ -40,28 +35,27 @@ vectorClock = {}
 # each replica knows:
 #   - its own socket address [SOCKET_ADDRESS]
 #   - its copy of the view   [VIEW]
-address = ""
-view = ""
+#   - its shard count        [SHARD_COUNT]
+socket_address = ""
+replica_view = ""
+shard_count = 0
 
-# thread init and lock
+
+# creating app
+app = Flask(__name__)
+app.debug = True
+manager = Manager(app)
+
+# threading variables
 dataLock = threading.Lock()
 thread = threading.Thread()
-
-# 1. for the first request
-# this function is initialized, creating a background thread that
-# checks for offline replicas
-
-# 2. all other requests
-# this function runs forever in the background (every 10 seconds)
-# change SLEEP_TIME for setting to a desired interval
 
 # initial put broadcast by the newly added instance
 def shareView(retrieveStore):
     requestPath = "/key-value-store-view"
-    data = {"socket-address":address}
+    data = {"socket-address":socket_address}
     broadcastPut(requestPath, data, retrieveStore)
 
-# custom server to run the shareView() function right from the get-go
 class CustomServer(Server):
     def __call__(self, app, *args, **kwargs):
         app.logger.info("Instance started!")
@@ -75,7 +69,6 @@ class CustomServer(Server):
 def init():
     thread = threading.Thread(target=validate)
     thread.start()
-
 
 def validate():
     global viewList
@@ -92,7 +85,7 @@ def validate():
                 shareView(False)
                 # print("THREAD CHECK:", vectorClock)
                 for addressee in replicasAlive:
-                    if addressee == address:
+                    if addressee == socket_address:
                         continue
                     url = constructURL(addressee, "/broadcast-get")
                     headers = {"content-type": "application/json"}
@@ -113,15 +106,73 @@ def validate():
     thread = threading.Thread(target=check)
     thread.start()
 
-# for debugging purposes
+# method for broadcasting put for VIEW operations
+def broadcastPut(requestPath, data, retrieveStore):
+    global keys
+    # loop through all addresses seen
+    # to check if previously removed addresses have resurrected
+    copy = viewList.copy()
+    for addressee in copy:
+        response = None
+        if addressee == socket_address:
+            continue
+        url = constructURL(addressee, requestPath)
+        headers = {"content-type": "application/json"}
+        try:
+            response = requests.put(url, data=json.dumps(data), headers=headers, timeout=TIME_OUT)
+        except:
+            app.logger.info(f"Broadcast from {socket_address} => {addressee} failed!")
+            pass
+        
+        # NOTE: should be logical to populate the kvs using a shard member
+
+        # 1. Add the replica to an existing shard (ID) 
+        # 2. grab the store of any online replicas in that store
+
+        # if not keys and retrieveStore:
+        #     app.logger.info(f"Attempting to populate Key-Value Store using address: {addressee}")
+        #     newKeys =  getStore(addressee)
+        #     newClock = getClock(addressee)
+        #     if newKeys:
+        #         keys.update(newKeys)
+        #     if newClock:
+        #         vectorClock.update(newClock)
+
+# method for broadcasting delete for VIEW operations
+def broadcastDelete(requestPath, data):
+    for addressee in replicasAlive:
+        # if the addressee is the current replica or
+        # if its down, we goto the next replica
+        if addressee == socket_address:
+            continue
+        url = constructURL(addressee, requestPath)
+        # url += "/broadcast-delete"
+        headers = {"content-type": "application/json"}
+        try:
+            response = requests.delete(
+                url, 
+                data=json.dumps(data), 
+                headers=headers,
+                timeout=TIME_OUT
+            )
+        except:
+            pass
+
 @app.route("/")
 def home():
     str = "Testing: "
-    if address:
-        str += address + " "
-    if view:
+    if socket_address:
+        str += socket_address + " "
+    if replica_view:
         str += stringize(replicasAlive)
+    str += str(shard_count)
     return str
+
+# replica endpoint for getting viewList
+@app.route("/get-view", methods=['GET'])
+def replicasSeen():
+    returnMsg = viewsMessage(json.dumps(viewList))
+    return returnMsg, OK
 
 # endpoints for view operations
 @app.route("/key-value-store-view", methods=['GET'])
@@ -140,7 +191,7 @@ def deleteView():
     # if the address is provided and is inside the replicas
     # list of addresses, we delete and update the view
     # NOTE: a replica shouldn't delete itself either of course
-    if addressToDelete and addressToDelete in replicasAlive and addressToDelete != address:
+    if addressToDelete and addressToDelete in replicasAlive and addressToDelete != socket_address:
         replicasAlive.remove(addressToDelete)
         viewList[addressToDelete] = None
         returnMsg = deleteMessage(True)
@@ -171,341 +222,18 @@ def putView():
         returnCode = NOT_FOUND
     return returnMsg, returnCode
 
-# endpoint for requests used to check dead replicas
-@app.route("/broadcast-get", methods=['GET'])
-def getCheck():
-    returnMsg = jsonify({
-        "message":"Replica Alive!"
-    })
-    return trimMsg(returnMsg), OK
-
-# key-value store endpoints (copied over from assignment 2)
-@app.route("/key-value-store/<key>", methods=['GET'])
-def getKey(key):
-    if key in keys and keys[key] != None:
-        returnMsg = existsKeyMessage(json.dumps(vectorClock), "Retrieved successfully", keys[key])
-        return returnMsg, OK
-    else:
-        returnMsg = badKeyRequest(False, "Key does not exist", "Error in GET")
-        return returnMsg, NOT_FOUND
-
-@app.route("/key-value-store/<key>", methods=['DELETE'])
-def deleteKey(key):
-    global vectorClock
-    data = request.get_json()
-    metaDataString = data['causal-metadata']
-
-    if metaDataString == "":
-        app.logger.info("------FIRST DELETE ERROR------")
-    else:
-        metaDataString = metaDataString.replace("'", "\"")
-        receivedVectorClock = json.loads(metaDataString)
-        receivedVectorClock = {k: {int(innerKey):v for innerKey, v in receivedVectorClock[k].items()} for k,v in receivedVectorClock.items() }
-
-        biggerClock, concurrent = compareClocks(vectorClock, receivedVectorClock)
-
-        if vectorClock == biggerClock:
-            pass
-
-        elif receivedVectorClock == biggerClock:
-            for socket in receivedVectorClock.keys():
-                upToDate = max(receivedVectorClock[socket])
-                kvPair = receivedVectorClock[socket][upToDate]
-                keys.update(kvPair)
-
-            vectorClock.update(receivedVectorClock)
-
-        elif concurrent:
-            for socket in receivedVectorClock.keys():
-                upToDate = max(receivedVectorClock[socket])
-                localHigh = max(vectorClock[socket])
-                if upToDate > localHigh:
-                    kvPair = receivedVectorClock[socket][upToDate]
-                    keys.update(kvPair)
-                    vectorClock[socket] = receivedVectorClock.get(socket)
-
-    if key in keys and keys[key] != None:
-        keys[key] = None
-
-        # print("INCREMENTING CLOCK DUE TO DELETION")
-        versions = vectorClock.get(address)
-        merged = {**vectorClock[address][max(versions)], **{key:None}}
-        vectorClock[address].update({(max(versions) + 1): merged })
-
-        metaDataString = json.dumps(vectorClock)
-
-        requestPath = "/delete-key-broadcast/" + key
-        with dataLock:
-            threading.Thread(target = broadcastDeleteKey, args=(requestPath, metaDataString,)).start()
-
-        returnMsg = putKeyMessage("Deleted successfully", metaDataString)
-        return returnMsg, OK
-    else:
-        returnMsg = badKeyRequest(False, "Key does not exist", "Error in DELETE")
-        return returnMsg, NOT_FOUND
-
-@app.route("/key-value-store/<key>", methods=['PUT'])
-def putKey(key):
-    global vectorClock
-
-    newKey = False
-    data = request.get_json()
-
-    value = data['value']
-    metaDataString = data['causal-metadata']
-
-    if not value:
-        returnMsg = badKeyRequest("", "Value is missing", "Error in PUT")
-        return returnMsg, BAD_REQUEST
-
-    if metaDataString == "":
-        app.logger.info("------FIRST PUT------")
-    else:
-        metaDataString = metaDataString.replace("'", "\"")
-        receivedVectorClock = json.loads(metaDataString)
-        receivedVectorClock = {k: {int(innerKey):v for innerKey, v in receivedVectorClock[k].items()} for k,v in receivedVectorClock.items() }
-
-        biggerClock, concurrent = compareClocks(vectorClock, receivedVectorClock)
-        # print("COMPARISON------------", vectorClock, receivedVectorClock)
-
-        # if the local clock is strictly bigger
-        if vectorClock == biggerClock:
-            pass
-        # if the recieved clock is stricly bigger
-        elif receivedVectorClock == biggerClock:
-            # print("CLOCK RETRIEVED LARGER!!!")
-
-            for socket in receivedVectorClock.keys():
-                upToDate = max(receivedVectorClock[socket])
-                kvPair = receivedVectorClock[socket][upToDate]
-                print(kvPair)
-                sys.stdout.flush()
-                keys.update(kvPair)
-
-            vectorClock.update(receivedVectorClock)
-        
-        elif concurrent:
-            # print("CONCURRENCY DETECTED")
-            for socket in receivedVectorClock.keys():
-                upToDate = max(receivedVectorClock[socket])
-                localHigh = max(vectorClock[socket])
-                if upToDate > localHigh:
-                    kvPair = receivedVectorClock[socket][upToDate]
-                    keys.update(kvPair)
-                    vectorClock[socket] = receivedVectorClock.get(socket)
-
-    # its a new key if it doesn't exist in the store
-    # None means that it was deleted previously, so we check that too
-    if key not in keys or keys[key] == None:
-        newKey = True
-
-    # add the key
-    keys[key] = value
-
-    # increment the vector clock and update causal-metadata
-    # print("INCREMENTING CLOCK DUE TO PUT")
-    versions = vectorClock.get(address)
-    merged = {**vectorClock[address][max(versions)], **{key:value}}
-    vectorClock[address].update({(max(versions) + 1): merged })
-    # print("RESULTING VC AFTER:", vectorClock)
-    metaDataString = json.dumps(vectorClock)
-
-    # create a thread to broadcast the PUT operation
-    requestPath = "/key-broadcast/" + key
-    with dataLock:
-        threading.Thread(target = broadcastPutKey, args=(requestPath, metaDataString, value,)).start()
-
-    # and output the appropriate return message
-    if newKey:
-        returnMsg = putKeyMessage("Added successfully", metaDataString)
-        return returnMsg, CREATED
-    else:
-        returnMsg = putKeyMessage("Updated successfully", metaDataString)
-        return returnMsg, OK
-
-# receiving endpoint for a key broadcast
-@app.route("/key-broadcast/<key>", methods=['PUT'])
-def putKeyBroadcast(key):
-    # since we checked the validity of the data in the initial 
-    # put message prior to the broadcast, we don't here
-    global vectorClock
-    data = request.get_json()
-
-    value = data['value']
-    metaDataString = data['causal-metadata']
-
-    if not value:
-        returnMsg = badKeyRequest("", "Value is missing", "Error in PUT")
-        return returnMsg, BAD_REQUEST
-
-
-    if metaDataString != "":
-        metaDataString = metaDataString.replace("'", "\"")
-        receivedVectorClock = json.loads(metaDataString)
-        receivedVectorClock = {k: {int(innerKey):v for innerKey, v in receivedVectorClock[k].items()} for k,v in receivedVectorClock.items() }
-
-        # print(receivedVectorClock)
-
-        biggerClock, concurrent = compareClocks(vectorClock, receivedVectorClock)
-
-        # if the local clock is strictly bigger which should NEVER happen since its a broadcast
-        if vectorClock == biggerClock:
-            pass
-        # if the recieved clock is stricly bigger
-        elif receivedVectorClock == biggerClock:
-            # print("CAUSAL DESCEPTANCY")
-
-            for socket in receivedVectorClock.keys():
-                upToDate = max(receivedVectorClock[socket])
-                kvPair = receivedVectorClock[socket][upToDate]
-                keys.update(kvPair)
-
-            vectorClock.update(receivedVectorClock)
-            
-        elif concurrent:
-            # print("CONCURRENCY DETECTED")
-
-            for socket in receivedVectorClock.keys():
-                upToDate = max(receivedVectorClock[socket])
-                localHigh = max(vectorClock[socket])
-                if upToDate > localHigh:
-                    kvPair = receivedVectorClock[socket][upToDate]
-                    keys.update(kvPair)
-                    vectorClock[socket] = receivedVectorClock.get(socket)
-
-
-    # we don't update the clock since the one received should have already incremented
-
-    metaDataString = json.dumps(vectorClock)
-    
-    if key not in keys or keys[key] == None:
-        # add the key to the dictionary if non-existent
-        keys[key] = value
-        returnMsg = putKeyMessage("Added successfully", metaDataString)
-        return returnMsg, CREATED
-    else:
-        # else update the existing key's value
-        keys[key] = value
-        returnMsg = putKeyMessage("Updated successfully", metaDataString)
-        return returnMsg, OK
-
-@app.route("/delete-key-broadcast/<key>", methods=['DELETE'])
-def deleteKeyBroadcast(key):
-    global vectorClock
-    data = request.get_json()
-
-    metaDataString = data['causal-metadata']
-
-    if metaDataString != "":
-        metaDataString = metaDataString.replace("'", "\"")
-        receivedVectorClock = json.loads(metaDataString)
-        receivedVectorClock = {k: {int(innerKey):v for innerKey, v in receivedVectorClock[k].items()} for k,v in receivedVectorClock.items() }
-
-        biggerClock, concurrent = compareClocks(vectorClock, receivedVectorClock)
-
-        if vectorClock == biggerClock:
-            pass
-
-        elif receivedVectorClock == biggerClock:
-            # print("CAUSAL DESCEPTANCY")
-
-            for socket in receivedVectorClock.keys():
-                upToDate = max(receivedVectorClock[socket])
-                kvPair = receivedVectorClock[socket][upToDate]
-                keys.update(kvPair)
-
-            vectorClock.update(receivedVectorClock)
-
-        elif concurrent:
-            # print("CONCURRENCY DETECTED")
-
-            for socket in receivedVectorClock.keys():
-                upToDate = max(receivedVectorClock[socket])
-                localHigh = max(vectorClock[socket])
-                if upToDate > localHigh:
-                    kvPair = receivedVectorClock[socket][upToDate]
-                    keys.update(kvPair)
-                    vectorClock[socket] = receivedVectorClock.get(socket)
-
-        
-    metaDataString = json.dumps(vectorClock)
-
-    if key in keys or keys[key] != None:
-        keys[key] = None
-        returnMsg = putKeyMessage("Deleted successfully", metaDataString)
-        return returnMsg, OK
-    else:
-        returnMsg = badKeyRequest(False, "Key does not exist", "Error in DELETE")
-        return returnMsg, NOT_FOUND
-
-# replica endpoint for getting key value store
-@app.route("/get-store", methods=['GET'])  
-def store():
-    returnMsg = storeMessage(json.dumps(keys))
-    return returnMsg, OK
-
-# replica endpoint for getting vector clock
-@app.route("/get-clock", methods=['GET'])  
-def clock():
-    returnMsg = clockMessage(json.dumps(vectorClock))
-    return returnMsg, OK
-
-# replica endpoint for getting viewList
-@app.route("/get-view", methods=['GET'])
-def replicasSeen():
-    returnMsg = viewsMessage(json.dumps(viewList))
-    return returnMsg, OK
-
-# helper functions for constructing kv json msgs
-def putKeyMessage(msg, metaDataString):
-    retmsg = jsonify({
-        "message":msg,
-        "causal-metadata":metaDataString
-    })
-    return trimMsg(retmsg)
-
-def badKeyRequest(exists, error, msg):
-    errorMsg = ""
-    if exists == "":
-        errorMsg = jsonify({
-            "error":error,
-            "message":msg
-        })
-    else:
-        errorMsg = jsonify({
-            "doesExist":exists,
-            "error":error,
-            "message":msg
-        })
-    return trimMsg(errorMsg)
-
-def existsKeyMessage(metaDataString, msg, value):
-    getMsg = ""
-    if value != "":
-        getMsg = jsonify({
-            "message":msg,
-            "causal-metadata":metaDataString,
-            "value":value
-        })
-    else:
-        getMsg = jsonify({
-            "doesExist":False,
-            "message":msg
-        })
-    return trimMsg(getMsg)
-
-def serviceError(error, msg):
-    retmsg = jsonify({
-        "error":error,
-        "message":msg
-    })
-    return trimMsg(retmsg)
-
 # helper functions for constructing view json msgs
 def viewMessage(view):
     retmsg = jsonify({
         "message":"View retrieved successfully",
         "view":view
+    })
+    return trimMsg(retmsg)
+
+def viewsMessage(views):
+    retmsg = jsonify({
+        "message":"All views retrieved successfully",
+        "views":views
     })
     return trimMsg(retmsg)
 
@@ -535,27 +263,6 @@ def putMessage(success):
         })
     return trimMsg(retmsg)
 
-def storeMessage(store):
-    retmsg = jsonify({
-        "message":"Key-Value store retrieved successfully",
-        "store":store
-    })
-    return trimMsg(retmsg)
-
-def clockMessage(clock):
-    retmsg = jsonify({
-        "message":"Vector clock retrieved successfully",
-        "clock":clock
-    })
-    return trimMsg(retmsg)
-
-def viewsMessage(views):
-    retmsg = jsonify({
-        "message":"All views retrieved successfully",
-        "views":views
-    })
-    return trimMsg(retmsg)
-
 # NOTE: this only takes in flask.wrappers.Response objects
 # method for removing new line character from jsonify
 def trimMsg(retmsg):
@@ -566,80 +273,6 @@ def trimMsg(retmsg):
 # method for constructing URLs for sending
 def constructURL(address, requestPath):
     return "http://" + address + requestPath
-
-# method for broadcasting delete for VIEW operations
-def broadcastDelete(requestPath, data):
-    for addressee in replicasAlive:
-        # if the addressee is the current replica or
-        # if its down, we goto the next replica
-        if addressee == address:
-            continue
-        url = constructURL(addressee, requestPath)
-        # url += "/broadcast-delete"
-        headers = {"content-type": "application/json"}
-        try:
-            response = requests.delete(
-                url, 
-                data=json.dumps(data), 
-                headers=headers,
-                timeout=TIME_OUT
-            )
-        except:
-            pass
-
-# method for broadcasting put for VIEW operations
-def broadcastPut(requestPath, data, retrieveStore):
-    global keys
-    # loop through all addresses seen
-    # to check if previously removed addresses have resurrected
-    copy = viewList.copy()
-    for addressee in copy:
-        response = None
-        if addressee == address:
-            continue
-        url = constructURL(addressee, requestPath)
-        headers = {"content-type": "application/json"}
-        try:
-            response = requests.put(url, data=json.dumps(data), headers=headers, timeout=TIME_OUT)
-        except:
-            app.logger.info(f"Broadcast from {address} => {addressee} failed!")
-            pass
-        
-        if not keys and retrieveStore:
-            app.logger.info(f"Attempting to populate Key-Value Store using address: {addressee}")
-            newKeys =  getStore(addressee)
-            newClock = getClock(addressee)
-            if newKeys:
-                keys.update(newKeys)
-
-            if newClock:
-                vectorClock.update(newClock)
-
-def broadcastPutKey(requestPath, metaDataString, value):
-    for addressee in replicasAlive:
-        response = None
-        if addressee == address:
-            continue
-        url = constructURL(addressee, requestPath)
-        headers = {"content-type": "application/json"}
-        try:
-            response = requests.put(url, data=json.dumps({"value": value, "causal-metadata": metaDataString}), headers=headers, timeout=0.00001)
-        except:
-            app.logger.info(f"Broadcast key from {address} => {addressee} failed!")
-            pass
-
-def broadcastDeleteKey(requestPath, metaDataString):
-    for addressee in replicasAlive:
-        response = None
-        if addressee == address:
-            continue
-        url = constructURL(addressee, requestPath)
-        headers = {"content-type": "application/json"}
-        try:
-            response = requests.delete(url, data=json.dumps({"causal-metadata": metaDataString}), headers=headers, timeout=0.00001)
-        except:
-            app.logger.info(f"Broadcast delete key from {address} => {addressee} failed!")
-            pass
 
 # view helper functions
 def parseList(data):
@@ -652,76 +285,6 @@ def parseList(data):
 def stringize(dataList):
     dataString = ",".join(dataList)
     return dataString
-
-# sends get request to specified addressee
-# for their copy of the key value store
-# merging store
-def getStore(addressee):
-    url = constructURL(addressee, "/get-store")
-    headers = {"content-type": "application/json"}
-    newKeys = {}
-    response = None
-    try:
-        response = requests.get(url, headers=headers, timeout=TIME_OUT)
-    except:
-        pass
-    if response:
-        newKeys = json.loads(json.loads(json.dumps(response.json()))['store'])
-        app.logger.info(f"Store accessed at URL: {url}")
-    else:
-        app.logger.info(f"Store request denied at URL: {url}")
-    return newKeys
-
-def getClock(addressee):
-    # global vectorClock
-    url = constructURL(addressee, "/get-clock")
-    headers = {"content-type": "application/json"}
-    clock = {}
-    response = None
-    try:
-        response = requests.get(url, headers=headers, timeout=TIME_OUT)
-    except:
-        pass
-
-    if response:
-        clock = json.loads(json.dumps(response.json()))['clock']
-        clock = clock.replace("'", "\"")
-        clock = json.loads(clock)
-        clock = {k: {int(innerKey):v for innerKey, v in clock[k].items()} for k,v in clock.items() }
-        app.logger.info(f"Clock accessed at URL: {url}")
-    else:
-        app.logger.info(f"Clock request denied at URL: {url}")
-    return clock
-    
-    
-def compareClocks(clock1, clock2):
-    # vector clock comparison
-    # 1. for all indexes VC(A) <= VC(B)
-    # 2. and VC(A) != VC(B)
-    condition1 = list(map(lambda socket: max(clock1.get(socket)) <= max(clock2.get(socket)), clock1))
-    condition2 = list(map(lambda socket: max(clock1.get(socket)) != max(clock2.get(socket)), clock1))
-    condition3 = list(map(lambda socket: max(clock1.get(socket)) >= max(clock2.get(socket)), clock1))
-    concurrent = False
-
-    c1 = all(bool == True for bool in condition1)
-    c2 = any(bool == True for bool in condition2)
-    c3 = all(bool == True for bool in condition3)
-
-    if c1 and c2:
-        return clock2, concurrent
-    elif c2 and c3:
-        return clock1, concurrent
-    elif c2 and not c1 and not c3:
-        concurrent = True
-        return {}, concurrent
-
-    return {}, False
-
-# def mergeReplicas(newStore, receivedVectorClock):
-#     for socket in receivedVectorClock:
-#         if receivedVectorClock.get(socket) > vec
-
-# NOTE: need to change all broadcasts to threaded
 
 # messages for console
 def consoleMessages(sleep=None):
@@ -761,13 +324,14 @@ def consoleMessages(sleep=None):
 if __name__ == "__main__":
     # populating environmental variables
     try:
-        address = os.environ['SOCKET_ADDRESS']
-        view = os.environ['VIEW']
+        socket_address = os.environ['SOCKET_ADDRESS']
+        replica_view = os.environ['VIEW']
+        shard_count = int(os.environ['SHARD_COUNT'])
     except:
         pass
 
     # creating the viewList for later manipulation
-    replicasAlive = parseList(view)
+    replicasAlive = parseList(replica_view)
     for replica in replicasAlive:
         viewList[replica] = "alive"
         vectorClock[replica] = {0:{}}
