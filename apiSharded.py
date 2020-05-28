@@ -31,6 +31,8 @@ keys = {}
 viewList = {}
 replicasAlive = []
 vectorClock = {}
+shardGroups = {}
+routing = {}
 
 # each replica knows:
 #   - its own socket address [SOCKET_ADDRESS]
@@ -222,6 +224,32 @@ def putView():
         returnCode = NOT_FOUND
     return returnMsg, returnCode
 
+# shard operations
+@app.route("/key-value-store-shard/shard-ids", methods=['GET'])
+def getShardIDs():
+    shardIDs = list(shardGroups.keys())
+    returnMsg = shardIDsMessage(json.dumps(shardIDs))
+    return returnMsg, OK
+
+@app.route("/key-value-store-shard/node-shard-id", methods=['GET'])
+def getShardID():
+    shardID = routing.get(socket_address)
+    returnMsg = shardIDMessage(shardID)
+    return returnMsg, OK
+
+@app.route("/key-value-store-shard/shard-id-members/<id>", methods=['GET'])
+def getShardGroup(id):
+    shardGroup = shardGroups.get(int(id))
+    print("GORUP", shardGroup)
+    sys.stdout.flush()
+    returnMsg = shardGroupMessage(json.dumps(shardGroup))
+    return returnMsg, OK
+
+@app.route("/key-value-store-shard/shard-id-key-count/<id>", methods=['GET'])
+def getShardKeyCount(id):
+    returnMsg = shardKeyCountMessage(0)
+    return returnMsg, OK
+
 # helper functions for constructing view json msgs
 def viewMessage(view):
     retmsg = jsonify({
@@ -261,6 +289,38 @@ def putMessage(success):
             "error":"Socket address already exists in the view",
             "message":"Error in PUT"
         })
+    return trimMsg(retmsg)
+
+def shardIDsMessage(ids):
+    retmsg = ""
+    retmsg = jsonify({
+        "message":"Shard IDs retrieved successfully",
+        "shard-ids":json.loads(ids)
+    })
+    return trimMsg(retmsg)
+
+def shardIDMessage(id):
+    retmsg = ""
+    retmsg = jsonify({
+        "message":"Shard ID of the node retrieved successfully",
+        "shard-id":id
+    })
+    return trimMsg(retmsg)
+
+def shardGroupMessage(group):
+    retmsg = ""
+    retmsg = jsonify({
+        "message":"Members of shard ID retrieved successfully", 
+        "shard-id-members":json.loads(group)
+    })
+    return trimMsg(retmsg)
+
+def shardKeyCountMessage(keys):
+    retmsg = ""
+    retmsg = jsonify({
+        "message":"Key count of shard ID retrieved successfully",
+        "shard-id-key-count":keys
+    })
     return trimMsg(retmsg)
 
 # NOTE: this only takes in flask.wrappers.Response objects
@@ -332,9 +392,20 @@ if __name__ == "__main__":
 
     # creating the viewList for later manipulation
     replicasAlive = parseList(replica_view)
+
+    nodesPerShard = len(replicasAlive) // shard_count
+
     for replica in replicasAlive:
         viewList[replica] = "alive"
         vectorClock[replica] = {0:{}}
+
+    for i, replica in enumerate(replicasAlive):
+        shardID = i%shard_count
+        if shardID in shardGroups:
+            shardGroups[shardID].append(replica)
+        else:
+            shardGroups[shardID] = [replica] 
+        routing[replica] = shardID
 
     # add command for docker to run the custom server
     manager.add_command('run', CustomServer(host='0.0.0.0', port=8085))
