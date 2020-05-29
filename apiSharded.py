@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, redirect
 from flask_script import Manager, Server
 import os
 import sys
@@ -53,16 +53,16 @@ dataLock = threading.Lock()
 thread = threading.Thread()
 
 # initial put broadcast by the newly added instance
-def shareView(retrieveStore):
+def shareView(retrieveShard):
     requestPath = "/key-value-store-view"
     data = {"socket-address":socket_address}
-    broadcastPut(requestPath, data, retrieveStore)
+    broadcastPut(requestPath, data, retrieveShard)
 
 class CustomServer(Server):
     def __call__(self, app, *args, **kwargs):
         app.logger.info("Instance started!")
         sys.stdout.flush()
-        shareView(True)
+        shareView(False)
         return Server.__call__(self, app, *args, **kwargs)
 
 # starts thread before 
@@ -84,8 +84,16 @@ def validate():
         while(True):
             consoleMessages()
             with dataLock:
-                shareView(False)
+                updateShards = False
                 # print("THREAD CHECK:", vectorClock)
+
+                # if the only replica alive is the
+                # current replica, we reset the
+                if len(replicasAlive) == 1:
+                    updateShards = True
+
+                shareView(updateShards)
+
                 for addressee in replicasAlive:
                     if addressee == socket_address:
                         continue
@@ -109,8 +117,9 @@ def validate():
     thread.start()
 
 # method for broadcasting put for VIEW operations
-def broadcastPut(requestPath, data, retrieveStore):
-    global keys
+def broadcastPut(requestPath, data, retrieveShard):
+    global shardGroups
+    global routing
     # loop through all addresses seen
     # to check if previously removed addresses have resurrected
     copy = viewList.copy()
@@ -131,6 +140,20 @@ def broadcastPut(requestPath, data, retrieveStore):
         # 1. Add the replica to an existing shard (ID) 
         # 2. grab the store of any online replicas in that store
 
+        # Actually, the right thing to do here is to populate the 
+        # shard information
+
+
+        if not shardGroups or retrieveShard:
+            app.logger.info(f"Attempting to populate shard information using address: {addressee}")
+            shardInformation, routingInformation = getShardInformation(addressee)
+            if shardInformation:
+                shardGroups.update(shardInformation)
+
+            if routingInformation:
+                routing.update(routingInformation)
+
+
         # if not keys and retrieveStore:
         #     app.logger.info(f"Attempting to populate Key-Value Store using address: {addressee}")
         #     newKeys =  getStore(addressee)
@@ -139,6 +162,25 @@ def broadcastPut(requestPath, data, retrieveStore):
         #         keys.update(newKeys)
         #     if newClock:
         #         vectorClock.update(newClock)
+
+def getShardInformation(addressee):
+    url = constructURL(addressee, "/get-shard-information")
+    headers = {"content-type": "application/json"}
+    shardInformation = {}
+    routingInformation = {}
+    response = None
+    try:
+        response = requests.get(url, headers=headers, timeout=TIME_OUT)
+    except:
+        pass
+    if response:
+        shardInformation = json.loads(response.json().get('shardInfo'))
+        routingInformation = json.loads(response.json().get('routingInfo'))
+        shardInformation = {int(k):v for k,v in shardInformation.items()}
+        app.logger.info(f"Shard info accessed at URL: {url}")
+    else:
+        app.logger.info(f"Shard info request denied at URL: {url}")
+    return shardInformation, routingInformation
 
 # method for broadcasting delete for VIEW operations
 def broadcastDelete(requestPath, data):
@@ -158,6 +200,19 @@ def broadcastDelete(requestPath, data):
                 timeout=TIME_OUT
             )
         except:
+            pass
+
+def broadcastAddNode(requestPath, data):
+    for addressee in replicasAlive:
+        response = None
+        if addressee == socket_address:
+            continue
+        url = constructURL(addressee, requestPath)
+        headers = {"content-type": "application/json"}
+        try:
+            response = requests.put(url, data=json.dumps(data), headers=headers, timeout=TIME_OUT)
+        except:
+            app.logger.info(f"Broadcast put node from {socket_address} => {addressee} failed!")
             pass
 
 @app.route("/")
@@ -247,7 +302,78 @@ def getShardGroup(id):
 
 @app.route("/key-value-store-shard/shard-id-key-count/<id>", methods=['GET'])
 def getShardKeyCount(id):
-    returnMsg = shardKeyCountMessage(0)
+    shardGroup = shardGroups.get(int(id))
+    numKeys = 0
+
+    # if the current socket address is part of the shard,
+    # we simply get the number of items in the key dict
+    if socket_address in shardGroup:
+        numKeys = len(keys.items())
+    # else, we have to request it from one of the replicas in the shard
+    # lets just use the first one in the group
+    else:
+        url = constructURL(shardGroup[0], "/get-key-count")
+        headers = {"content-type": "application/json"}
+        response = None
+        try:
+            response = requests.get(url, headers, timeout=TIME_OUT)
+        except:
+            pass
+
+        #needs to be tested
+        if response:
+            numKeys = int(response.json.get('keycount'))
+
+    returnMsg = shardKeyCountMessage(numKeys)
+    return returnMsg, OK
+
+@app.route("/get-key-count", methods=['GET'])
+def getKeyCount():
+    global keys
+    returnMsg = keyCountMessage(str(len(keys.items())))
+    return returnMsg, OK
+
+@app.route("/key-value-store-shard/add-member/<id>", methods=['PUT'])
+def addNode(id):
+    # if not keys and retrieveStore:
+    #     app.logger.info(f"Attempting to populate Key-Value Store using address: {addressee}")
+    #     newKeys =  getStore(addressee)
+    #     newClock = getClock(addressee)
+    #     if newKeys:
+    #         keys.update(newKeys)
+    #     if newClock:
+    #         vectorClock.update(newClock)
+    data = request.get_json()
+    addressToPut = data['socket-address']
+    id = int(id)
+    if id in shardGroups:
+        shardGroups.get(id).append(addressToPut)
+        routing[addressToPut] = id
+        requestPath = "/key-value-store-shard/add-member-broadcast/" + str(id)
+        with dataLock:
+            threading.Thread(target=broadcastAddNode, args=(requestPath, data,)).start()
+    return "", OK
+
+@app.route("/key-value-store-shard/add-member-broadcast/<id>", methods=['PUT'])
+def addNodeBroadcast(id):
+    id = int(id)
+    data = request.get_json()
+    addressToPut = data['socket-address']
+
+    shardGroup = shardGroups.get(id)
+    shardGroup.append(addressToPut)
+    routing[addressToPut] = id
+
+    return "", OK
+
+@app.route("/shard-error")
+def shardError():
+    returnMsg = shardErrorMessage()
+    return returnMsg, BAD_REQUEST
+
+@app.route("/get-shard-information")
+def shardInfoEndpoint():
+    returnMsg = shardInfoMessage(json.dumps(shardGroups), json.dumps(routing))
     return returnMsg, OK
 
 # helper functions for constructing view json msgs
@@ -323,6 +449,27 @@ def shardKeyCountMessage(keys):
     })
     return trimMsg(retmsg)
 
+def shardErrorMessage():
+    retmsg = jsonify({
+        "message":"Not enough nodes to provide fault-tolerance with the given shard count!"
+    })
+    return trimMsg(retmsg)
+
+def keyCountMessage(numKeys):
+    retmsg = jsonify({
+        "message":"Key Count retrieved successfully",
+        "keycount":numKeys
+    })
+    return trimMsg(retmsg)
+
+def shardInfoMessage(groups, routings):
+    retmsg = jsonify({
+        "message":"Shard information successfully retrieved",
+        "shardInfo":groups,
+        "routingInfo":routings
+    })
+    return trimMsg(retmsg)
+
 # NOTE: this only takes in flask.wrappers.Response objects
 # method for removing new line character from jsonify
 def trimMsg(retmsg):
@@ -345,6 +492,29 @@ def parseList(data):
 def stringize(dataList):
     dataString = ",".join(dataList)
     return dataString
+
+def compareClocks(clock1, clock2):
+    # vector clock comparison
+    # 1. for all indexes VC(A) <= VC(B)
+    # 2. and VC(A) != VC(B)
+    condition1 = list(map(lambda socket: max(clock1.get(socket)) <= max(clock2.get(socket)), clock1))
+    condition2 = list(map(lambda socket: max(clock1.get(socket)) != max(clock2.get(socket)), clock1))
+    condition3 = list(map(lambda socket: max(clock1.get(socket)) >= max(clock2.get(socket)), clock1))
+    concurrent = False
+
+    c1 = all(bool == True for bool in condition1)
+    c2 = any(bool == True for bool in condition2)
+    c3 = all(bool == True for bool in condition3)
+
+    if c1 and c2:
+        return clock2, concurrent
+    elif c2 and c3:
+        return clock1, concurrent
+    elif c2 and not c1 and not c3:
+        concurrent = True
+        return {}, concurrent
+
+    return {}, False
 
 # messages for console
 def consoleMessages(sleep=None):
@@ -381,6 +551,7 @@ def consoleMessages(sleep=None):
             sys.stdout.flush()
             return
 
+
 if __name__ == "__main__":
     # populating environmental variables
     try:
@@ -393,19 +564,31 @@ if __name__ == "__main__":
     # creating the viewList for later manipulation
     replicasAlive = parseList(replica_view)
 
-    nodesPerShard = len(replicasAlive) // shard_count
-
+    # populate vector clocks and view history
     for replica in replicasAlive:
         viewList[replica] = "alive"
         vectorClock[replica] = {0:{}}
 
-    for i, replica in enumerate(replicasAlive):
-        shardID = i%shard_count
-        if shardID in shardGroups:
-            shardGroups[shardID].append(replica)
-        else:
-            shardGroups[shardID] = [replica] 
-        routing[replica] = shardID
+    # we need to check if the shard env variable is provided first
+    # if it is, that means that the replica is not a instance
+    # that was added later, so we create the shard groups
+    if shard_count != 0:
+
+        nodesPerShard = len(replicasAlive) // shard_count
+
+        # if the SHARD_COUNT variable is too large, we exit
+        if nodesPerShard < 2:
+            url = constructURL(socket_address, "/shard-error")
+            redirect(url, code=302)
+            sys.exit("Invalid Docker Command: SHARD_COUNT")
+
+        for i, replica in enumerate(replicasAlive):
+            shardID = i%shard_count
+            if shardID in shardGroups:
+                shardGroups[shardID].append(replica)
+            else:
+                shardGroups[shardID] = [replica] 
+            routing[replica] = shardID
 
     # add command for docker to run the custom server
     manager.add_command('run', CustomServer(host='0.0.0.0', port=8085))

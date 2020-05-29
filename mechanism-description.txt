@@ -1,1 +1,28 @@
 # mechanism-description.txt
+
+# Shard organization
+--- Ensuring that shard information is consistent
+
+- We need to make sure that all replicas contain the same shard configuration. On docker 
+initialization, shard creation is essentially based on the view environmental variable
+as it is guaranteed to be the same for all docker commands. 
+
+--- Shard creation
+
+- We take each address in the view and mod the index with the shard_count. This guarantees 
+that the shards will contain an even distribution of socket addresses. 
+
+- During replica startup, the shard_count is checked for validity. If it is too high to
+support the 2 replicas per shard criteria, we simply reject the docker command and seize
+replica startup. The computation is pretty simple; simply check if the VIEW / SHARD_COUNT >= 2
+
+--- Adding nodes to shards
+
+- Since shard information is globally shared to each replica, every replica needs to be updated.
+Therefore, when the PUT request is sent through, a broadcast is needed to notify all other replicas.
+
+- New docker instances that are required for new node additions automatically request the global
+shard information from another replica. This guarantees that all nodes have the same shard info.
+
+- The shards keys and vector clock needs to be retrieved from a replica in the shard. This is done
+when the new node is added to the shard. 
