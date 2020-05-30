@@ -134,15 +134,6 @@ def broadcastPut(requestPath, data, retrieveShard):
         except:
             app.logger.info(f"Broadcast from {socket_address} => {addressee} failed!")
             pass
-        
-        # NOTE: should be logical to populate the kvs using a shard member
-
-        # 1. Add the replica to an existing shard (ID) 
-        # 2. grab the store of any online replicas in that store
-
-        # Actually, the right thing to do here is to populate the 
-        # shard information
-
 
         if not shardGroups or retrieveShard:
             app.logger.info(f"Attempting to populate shard information using address: {addressee}")
@@ -152,16 +143,6 @@ def broadcastPut(requestPath, data, retrieveShard):
 
             if routingInformation:
                 routing.update(routingInformation)
-
-
-        # if not keys and retrieveStore:
-        #     app.logger.info(f"Attempting to populate Key-Value Store using address: {addressee}")
-        #     newKeys =  getStore(addressee)
-        #     newClock = getClock(addressee)
-        #     if newKeys:
-        #         keys.update(newKeys)
-        #     if newClock:
-        #         vectorClock.update(newClock)
 
 def getShardInformation(addressee):
     url = constructURL(addressee, "/get-shard-information")
@@ -190,7 +171,6 @@ def broadcastDelete(requestPath, data):
         if addressee == socket_address:
             continue
         url = constructURL(addressee, requestPath)
-        # url += "/broadcast-delete"
         headers = {"content-type": "application/json"}
         try:
             response = requests.delete(
@@ -215,6 +195,45 @@ def broadcastAddNode(requestPath, data):
             app.logger.info(f"Broadcast put node from {socket_address} => {addressee} failed!")
             pass
 
+# sends get request to specified addressee
+# for their copy of the key value store
+def getStore(addressee):
+    url = constructURL(addressee, "/get-store")
+    headers = {"content-type": "application/json"}
+    newKeys = {}
+    response = None
+    try:
+        response = requests.get(url, headers=headers, timeout=TIME_OUT)
+    except:
+        pass
+    if response:
+        newKeys = json.loads(json.loads(json.dumps(response.json()))['store'])
+        app.logger.info(f"Store accessed at URL: {url}")
+    else:
+        app.logger.info(f"Store request denied at URL: {url}")
+    return newKeys
+
+def getClock(addressee):
+    # global vectorClock
+    url = constructURL(addressee, "/get-clock")
+    headers = {"content-type": "application/json"}
+    clock = {}
+    response = None
+    try:
+        response = requests.get(url, headers=headers, timeout=TIME_OUT)
+    except:
+        pass
+
+    if response:
+        clock = json.loads(json.dumps(response.json()))['clock']
+        clock = clock.replace("'", "\"")
+        clock = json.loads(clock)
+        clock = {k: {int(innerKey):v for innerKey, v in clock[k].items()} for k,v in clock.items() }
+        app.logger.info(f"Clock accessed at URL: {url}")
+    else:
+        app.logger.info(f"Clock request denied at URL: {url}")
+    return clock
+
 @app.route("/")
 def home():
     str = "Testing: "
@@ -224,6 +243,14 @@ def home():
         str += stringize(replicasAlive)
     str += str(shard_count)
     return str
+
+# endpoint for requests used to check dead replicas
+@app.route("/broadcast-get", methods=['GET'])
+def getCheck():
+    returnMsg = jsonify({
+        "message":"Replica Alive!"
+    })
+    return trimMsg(returnMsg), OK
 
 # replica endpoint for getting viewList
 @app.route("/get-view", methods=['GET'])
@@ -262,8 +289,7 @@ def deleteView():
 def putView():
     data = request.get_json()
     addressToPut = data["socket-address"]
-    if addressToPut not in vectorClock:
-        vectorClock[addressToPut] = {0:{}}
+
     returnMsg = ""
     returnCode = None
 
@@ -303,7 +329,7 @@ def getShardGroup(id):
 @app.route("/key-value-store-shard/shard-id-key-count/<id>", methods=['GET'])
 def getShardKeyCount(id):
     shardGroup = shardGroups.get(int(id))
-    numKeys = 0
+    numKeys = None
 
     # if the current socket address is part of the shard,
     # we simply get the number of items in the key dict
@@ -312,17 +338,23 @@ def getShardKeyCount(id):
     # else, we have to request it from one of the replicas in the shard
     # lets just use the first one in the group
     else:
-        url = constructURL(shardGroup[0], "/get-key-count")
-        headers = {"content-type": "application/json"}
-        response = None
-        try:
-            response = requests.get(url, headers, timeout=TIME_OUT)
-        except:
-            pass
+        for addressee in shardGroup:
+            if not numKeys:
+                url = constructURL(addressee, "/get-key-count")
+                headers = {"content-type": "application/json"}
+                response = None
+                try:
+                    response = requests.get(url, headers, timeout=TIME_OUT)
+                except:
+                    pass
 
-        #needs to be tested
-        if response:
-            numKeys = int(response.json.get('keycount'))
+                #needs to be tested
+                if response:
+                    numKeys = int(response.json().get('keycount'))
+        
+    if not numKeys:
+        app.logger.info(f"All replicas of shard {id} are down!")
+        return "", NOT_FOUND
 
     returnMsg = shardKeyCountMessage(numKeys)
     return returnMsg, OK
@@ -335,36 +367,94 @@ def getKeyCount():
 
 @app.route("/key-value-store-shard/add-member/<id>", methods=['PUT'])
 def addNode(id):
-    # if not keys and retrieveStore:
-    #     app.logger.info(f"Attempting to populate Key-Value Store using address: {addressee}")
-    #     newKeys =  getStore(addressee)
-    #     newClock = getClock(addressee)
-    #     if newKeys:
-    #         keys.update(newKeys)
-    #     if newClock:
-    #         vectorClock.update(newClock)
     data = request.get_json()
     addressToPut = data['socket-address']
     id = int(id)
     if id in shardGroups:
         shardGroups.get(id).append(addressToPut)
         routing[addressToPut] = id
+
+        # get the shard of the current replica
+        shardGroup = shardGroups.get(routing.get(socket_address))
+        inGroup = addressToPut in shardGroup
+
+        # we only add nodes to the VC that are:
+        # not in the vector clock but belong in the same shard
+        if addressToPut not in vectorClock and inGroup:
+            vectorClock[addressToPut] = {0:{}}
+
         requestPath = "/key-value-store-shard/add-member-broadcast/" + str(id)
         with dataLock:
             threading.Thread(target=broadcastAddNode, args=(requestPath, data,)).start()
+
     return "", OK
+
+    # if socket_address in routing:
+    #     shardGroup = shardGroups.get(routing.get(socket_address))
+
+    #     inGroup = addressToPut in shardGroup
+
+    #     if addressToPut not in vectorClock and routing.get(addressToPut) != None and inGroup:
+    #         vectorClock[addressToPut] = {0:{}}
 
 @app.route("/key-value-store-shard/add-member-broadcast/<id>", methods=['PUT'])
 def addNodeBroadcast(id):
+    global keys
+    global vectorClock
     id = int(id)
     data = request.get_json()
     addressToPut = data['socket-address']
-
+    
+    # get the shard group of the id to add to
     shardGroup = shardGroups.get(id)
+
+    # add the address to the shard
     shardGroup.append(addressToPut)
     routing[addressToPut] = id
 
+    # we also want to add it to the vector clock of the shard
+    # we only add nodes to the VC that are:
+    # not in the vector clock but belong in the same shard
+
+    # get the shard of the current replica
+    group = shardGroups.get(routing.get(socket_address))
+    inGroup = addressToPut in group
+
+    if addressToPut not in vectorClock and inGroup:
+        vectorClock[addressToPut] = {0:{}}
+    
+    # if the current replica is adding itself to a shard,
+    # we also get the kvs of the shard to complete the addition
+    # of the node to the shard
+    if addressToPut == socket_address:
+        for addressee in shardGroup:
+
+            # since we added the new node, we don't ask itself
+            if addressee == socket_address:
+                continue
+
+            if not keys:
+                app.logger.info(f"Attempting to populate Key-Value Store using address: {addressee}")
+                newKeys = getStore(addressee)
+                newClock = getClock(addressee)
+                if newKeys:
+                    keys.update(newKeys)
+                if newClock:
+                    vectorClock.update(newClock)
+
     return "", OK
+
+# replica endpoint for getting key value store
+@app.route("/get-store", methods=['GET'])  
+def store():
+    returnMsg = storeMessage(json.dumps(keys))
+    return returnMsg, OK
+
+# replica endpoint for getting vector clock
+@app.route("/get-clock", methods=['GET'])  
+def clock():
+    returnMsg = clockMessage(json.dumps(vectorClock))
+    return returnMsg, OK
 
 @app.route("/shard-error")
 def shardError():
@@ -375,6 +465,8 @@ def shardError():
 def shardInfoEndpoint():
     returnMsg = shardInfoMessage(json.dumps(shardGroups), json.dumps(routing))
     return returnMsg, OK
+
+
 
 # helper functions for constructing view json msgs
 def viewMessage(view):
@@ -467,6 +559,20 @@ def shardInfoMessage(groups, routings):
         "message":"Shard information successfully retrieved",
         "shardInfo":groups,
         "routingInfo":routings
+    })
+    return trimMsg(retmsg)
+
+def storeMessage(store):
+    retmsg = jsonify({
+        "message":"Key-Value store retrieved successfully",
+        "store":store
+    })
+    return trimMsg(retmsg)
+
+def clockMessage(clock):
+    retmsg = jsonify({
+        "message":"Vector clock retrieved successfully",
+        "clock":clock
     })
     return trimMsg(retmsg)
 
@@ -567,7 +673,6 @@ if __name__ == "__main__":
     # populate vector clocks and view history
     for replica in replicasAlive:
         viewList[replica] = "alive"
-        vectorClock[replica] = {0:{}}
 
     # we need to check if the shard env variable is provided first
     # if it is, that means that the replica is not a instance
@@ -589,6 +694,11 @@ if __name__ == "__main__":
             else:
                 shardGroups[shardID] = [replica] 
             routing[replica] = shardID
+
+        # only populate vector clocks of the same shard 
+        shardGroup = shardGroups.get(routing.get(socket_address))
+        for replica in shardGroup:
+            vectorClock[replica] = {0:{}}
 
     # add command for docker to run the custom server
     manager.add_command('run', CustomServer(host='0.0.0.0', port=8085))
