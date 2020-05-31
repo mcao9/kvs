@@ -75,6 +75,16 @@ curl --request GET --header "Content-Type: application/json" --write-out "\n%{ht
 
 curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-shard/shard-id-key-count/1
 curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-shard/shard-id-key-count/0
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/key-value-store-shard/shard-id-key-count/1
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/key-value-store-shard/shard-id-key-count/0
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/key-value-store-shard/shard-id-key-count/1
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/key-value-store-shard/shard-id-key-count/0
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/key-value-store-shard/shard-id-key-count/1
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/key-value-store-shard/shard-id-key-count/0
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/key-value-store-shard/shard-id-key-count/1
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/key-value-store-shard/shard-id-key-count/0
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/key-value-store-shard/shard-id-key-count/1
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/key-value-store-shard/shard-id-key-count/0
 
 curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8082/key-value-store-shard/shard-id-key-count/1
 curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8082/key-value-store-shard/shard-id-key-count/0
@@ -138,3 +148,11 @@ curl --request GET --header "Content-Type: application/json" --write-out "\n%{ht
 
 #Testing putKey 
 curl --request PUT --header "Content-Type: application/json" --write-out "\n%{http_code}\n" --data '{"value": "I like potatoes", "causal-metadata": ""}' http://10.10.0.2:8085/key-value-store/mykey1
+
+#Testing putKeyBroadcast
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/get-store
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/get-store
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/get-store
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/get-store 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/get-store 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/get-store 

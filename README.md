@@ -19,6 +19,6 @@ CSE 138 Distributed Systems Assignment 4
 |                          |
 
 ## Usage:
-    docker build --tag assignment3-img .
+    docker build --tag assignment4-img .
     
 

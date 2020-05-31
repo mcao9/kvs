@@ -36,6 +36,7 @@ vectorClock = {}
 shardGroups = {}
 routing = {}
 hashRing = None
+sharedResponse = None
 
 # each replica knows:
 #   - its own socket address [SOCKET_ADDRESS]
@@ -521,8 +522,18 @@ def getKey(key):
                     app.logger.info(f"Forward GET request from {socket_address} => {addressee} failed!")
                     pass
 
+                # return the forwarded response back to the client
                 if response and response.json().get('value'):
+                    metaDataString = response.json().get('causal-metadata')
                     value = response.json().get('value')
+            else:
+                break
+        
+        if value is None:
+            return "Cannot Forward GET!!", NOT_FOUND
+        else:
+            returnMsg = existsKeyMessage(metaDataString, "Retrieved successfully", value)
+            return returnMsg, OK
 
     if value != None:
         returnMsg = existsKeyMessage(json.dumps(vectorClock), "Retrieved successfully", value)
@@ -548,6 +559,7 @@ def putKey(key):
     # get data
     value = data['value']
     metaDataString = data['causal-metadata']
+    msg = None
 
     # check invalid request
     if not value:
@@ -559,15 +571,15 @@ def putKey(key):
 
     # if the node does not belong to the shard, we forward the request
     if routing.get(socket_address) != shardID:
-        response = None
         # by getting the proper shard and looping through the addresses
         shardGroup = shardGroups.get(shardID)
+        response = None
         for addressee in shardGroup:
-            if not response:
+            if not msg:
                 url = constructURL(addressee, request.path)
                 headers = {"content-type": "application/json"}
                 try:
-                    response = requests.put(url, data=json.dumps({"value": value, "causal-metadata": metaDataString}), headers=headers, timeout=0.00001)
+                    response = requests.put(url, data=json.dumps({"value": value, "causal-metadata": metaDataString}), headers=headers, timeout = 5)
                 except:
                     app.logger.info(f"Forward PUT request from {socket_address} => {addressee} failed!")
                     pass
@@ -575,11 +587,19 @@ def putKey(key):
                 # return the forwarded messages response to the client
                 if response:
                     msg = response.json().get('message')
-                    metaData = response.json().get('causal-metadata')
-                    returnMsg = putKeyMessage(msg, metaData)
-                    return returnMsg, response.status_code
+                    metaDataString = response.json().get('causal-metadata')
+            else:
+                break
+
+        # messages that are failed to be forwarded are simply rejected
+        if msg is None:
+            return "Cannot Forward!!", NOT_FOUND
+        else:
+            returnMsg = putKeyMessage(msg, metaDataString)
+            return returnMsg, response.status_code
     # else if the node does belong to the shard, we start the operation
-    else:
+    else:  
+
         # by verifying causal consistency
         if metaDataString == "":
             app.logger.info("------FIRST PUT------")
@@ -614,7 +634,7 @@ def putKey(key):
                         kvPair = receivedVectorClock[socket][upToDate]
                         keys.update(kvPair)
                         vectorClock[socket] = receivedVectorClock.get(socket)
-        
+    
         # now that causal consistency has been established
         # we start the actual operation
 
@@ -647,7 +667,64 @@ def putKey(key):
 
 @app.route("/key-broadcast/<key>", methods=['PUT'])
 def putKeyBroadcast(key):
-    return "", 200
+    global vectorClock
+    data = request.get_json()
+
+    # get data
+    value = data['value']
+    metaDataString = data['causal-metadata']
+
+    # check invalid request
+    if not value:
+        returnMsg = badKeyRequest("", "Value is missing", "Error in PUT")
+        return returnMsg, BAD_REQUEST
+
+    # broadcasts are guaranteed to be within a shard,
+    # so we don't need to check
+
+    # once again, we need to check for causal violations
+    # before applying the operation
+    if metaDataString != "":
+        metaDataString = metaDataString.replace("'", "\"")
+        receivedVectorClock = json.loads(metaDataString)
+        receivedVectorClock = {k: {int(innerKey):v for innerKey, v in receivedVectorClock[k].items()} for k,v in receivedVectorClock.items() }
+
+        biggerClock, concurrent = compareClocks(vectorClock, receivedVectorClock)
+
+        # if the local clock is strictly bigger which should NEVER happen since its a broadcast
+        if vectorClock == biggerClock:
+            pass
+        # if the recieved clock is stricly bigger
+        elif receivedVectorClock == biggerClock:
+            for socket in receivedVectorClock.keys():
+                upToDate = max(receivedVectorClock[socket])
+                kvPair = receivedVectorClock[socket][upToDate]
+                keys.update(kvPair)
+
+            vectorClock.update(receivedVectorClock)
+            
+        elif concurrent:
+            for socket in receivedVectorClock.keys():
+                upToDate = max(receivedVectorClock[socket])
+                localHigh = max(vectorClock[socket])
+                if upToDate > localHigh:
+                    kvPair = receivedVectorClock[socket][upToDate]
+                    keys.update(kvPair)
+                    vectorClock[socket] = receivedVectorClock.get(socket)
+
+    metaDataString = json.dumps(vectorClock)
+
+    # check if its a new key or as been previously deleted
+    if key not in keys or keys[key] == None:
+        # perform operation
+        keys[key] = value
+        returnMsg = putKeyMessage("Added successfully", metaDataString)
+        return returnMsg, CREATED
+    else:
+        # else update the existing key's value
+        keys[key] = value
+        returnMsg = putKeyMessage("Updated successfully", metaDataString)
+        return returnMsg, OK
 
 # helper functions for constructing kv json msgs
 def putKeyMessage(msg, metaDataString):
@@ -931,9 +1008,6 @@ if __name__ == "__main__":
         sys.stdout.flush()
         
 
-
-        
-
     # add command for docker to run the custom server
-    manager.add_command('run', CustomServer(host='0.0.0.0', port=8085))
+    manager.add_command('run', CustomServer(host='0.0.0.0', port=8085, threaded=True))
     manager.run()

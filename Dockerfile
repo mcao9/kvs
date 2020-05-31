@@ -1,5 +1,5 @@
 FROM python:alpine3.7
-RUN apk --no-cache add curl
+RUN apk add --no-cache curl
 COPY requirements.txt /requirements.txt
 COPY . /app
 WORKDIR /app
