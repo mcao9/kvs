@@ -1,0 +1,140 @@
+# testing commands
+docker run -p 8082:8085 --net=mynet --ip=10.10.0.2 --name="node1" -e SOCKET_ADDRESS="10.10.0.2:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="2" --rm assignment4-img
+docker run -p 8083:8085 --net=mynet --ip=10.10.0.3 --name="node2" -e SOCKET_ADDRESS="10.10.0.3:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="2" --rm assignment4-img
+docker run -p 8084:8085 --net=mynet --ip=10.10.0.4 --name="node3" -e SOCKET_ADDRESS="10.10.0.4:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="2" --rm assignment4-img
+docker run -p 8086:8085 --net=mynet --ip=10.10.0.5 --name="node4" -e SOCKET_ADDRESS="10.10.0.5:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="2" --rm assignment4-img
+docker run -p 8087:8085 --net=mynet --ip=10.10.0.6 --name="node5" -e SOCKET_ADDRESS="10.10.0.6:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="2" --rm assignment4-img
+docker run -p 8088:8085 --net=mynet --ip=10.10.0.7 --name="node6" -e SOCKET_ADDRESS="10.10.0.7:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="2" --rm assignment4-img
+
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-view 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/key-value-store-view 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/key-value-store-view 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/key-value-store-view 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/key-value-store-view 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/key-value-store-view 
+
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/get-view 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/get-view 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/get-view 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/get-view 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/get-view 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/get-view
+
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-view &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/key-value-store-view &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/key-value-store-view &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/key-value-store-view &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/key-value-store-view &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/key-value-store-view 
+
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/get-view &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/get-view &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/get-view &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/get-view &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/get-view &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/get-view
+
+#Testing getShardIDs()
+
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-shard/shard-ids
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/key-value-store-shard/shard-ids
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/key-value-store-shard/shard-ids
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/key-value-store-shard/shard-ids
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/key-value-store-shard/shard-ids
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/key-value-store-shard/shard-ids
+
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8082/key-value-store-shard/shard-ids
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8083/key-value-store-shard/shard-ids
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8084/key-value-store-shard/shard-ids
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8086/key-value-store-shard/shard-ids
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8087/key-value-store-shard/shard-ids
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8088/key-value-store-shard/shard-ids
+
+#Testing getShardID()
+
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-shard/node-shard-id
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/key-value-store-shard/node-shard-id
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/key-value-store-shard/node-shard-id
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/key-value-store-shard/node-shard-id
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/key-value-store-shard/node-shard-id
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/key-value-store-shard/node-shard-id
+
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8082/key-value-store-shard/node-shard-id
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8083/key-value-store-shard/node-shard-id
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8084/key-value-store-shard/node-shard-id
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8088/key-value-store-shard/node-shard-id
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8087/key-value-store-shard/node-shard-id
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8088/key-value-store-shard/node-shard-id
+
+#Testing getShardGroup()
+
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-shard/shard-id-members/0
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/key-value-store-shard/shard-id-members/1
+
+#Testing getShardKeyCount()
+
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-shard/shard-id-key-count/1
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-shard/shard-id-key-count/0
+
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8082/key-value-store-shard/shard-id-key-count/1
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://localhost:8082/key-value-store-shard/shard-id-key-count/0
+
+#Testing addNode()
+
+docker run -p 8089:8085 --net=mynet --ip=10.10.0.8 --name="node7" -e SOCKET_ADDRESS="10.10.0.8:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085,10.10.0.8:8085" --rm assignment4-img
+
+curl --request PUT --header "Content-Type: application/json" --write-out "\n%{http_code}\n" --data '{"socket-address": "10.10.0.8:8085"}' http://10.10.0.2:8085/key-value-store-shard/add-member/1
+
+---testing members
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-shard/shard-id-members/1
+---testing broadcast
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-shard/shard-id-members/1 &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/key-value-store-shard/shard-id-members/1 &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/key-value-store-shard/shard-id-members/1 &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/key-value-store-shard/shard-id-members/1 &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/key-value-store-shard/shard-id-members/1 &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/key-value-store-shard/shard-id-members/1 &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.8:8085/key-value-store-shard/shard-id-members/1 
+
+#Testing getShardInformation()
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/get-shard-information 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/get-shard-information 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/get-shard-information 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/get-shard-information 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/get-shard-information 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/get-shard-information 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.8:8085/get-shard-information 
+
+#Testing vector clock initiation
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/get-clock
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/get-clock
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/get-clock 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/get-clock
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/get-clock
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/get-clock
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.8:8085/get-clock
+
+#Testing getKey
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8082/key-value-store/mykey1
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8082/key-value-store/mykey2
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8082/key-value-store/mykey3
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8082/key-value-store/mykey4
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8082/key-value-store/mykey5
+
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8083/key-value-store/mykey1
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8083/key-value-store/mykey2
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8083/key-value-store/mykey3
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8083/key-value-store/mykey4
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8083/key-value-store/mykey5
+
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8084/key-value-store/mykey1
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8084/key-value-store/mykey2
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8084/key-value-store/mykey3
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8084/key-value-store/mykey4
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://127.0.0.1:8084/key-value-store/mykey5
+
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store/mykey1
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/key-value-store/mykey1
+
+#Testing putKey 
+curl --request PUT --header "Content-Type: application/json" --write-out "\n%{http_code}\n" --data '{"value": "I like potatoes", "causal-metadata": ""}' http://10.10.0.2:8085/key-value-store/mykey1
