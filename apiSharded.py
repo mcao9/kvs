@@ -6,6 +6,7 @@ import copy
 import json
 import time
 import requests
+from random import shuffle
 from uhashring import HashRing
 import hashlib
 import threading
@@ -361,7 +362,7 @@ def getShardID():
 @app.route("/key-value-store-shard/shard-id-members/<id>", methods=['GET'])
 def getShardGroup(id):
     shardGroup = shardGroups.get(int(id))
-    print("GORUP", shardGroup)
+    # print("GORUP", shardGroup)
     sys.stdout.flush()
     returnMsg = shardGroupMessage(json.dumps(shardGroup))
     return returnMsg, OK
@@ -375,7 +376,7 @@ def getShardKeyCount(id):
     # we simply get the number of items in the key dict
     if socket_address in shardGroup:
         if keys.items():
-            numKeys = len(keys.items())
+            numKeys = len([x for x in keys.values() if x])
         else:
             numKeys = 0
     # else, we have to request it from one of the replicas in the shard
@@ -405,7 +406,8 @@ def getShardKeyCount(id):
 @app.route("/get-key-count", methods=['GET'])
 def getKeyCount():
     global keys
-    returnMsg = keyCountMessage(str(len(keys.items())))
+    keyCount = len([x for x in keys.values() if x])
+    returnMsg = keyCountMessage(str(keyCount))
     return returnMsg, OK
 
 @app.route("/key-value-store-shard/add-member/<id>", methods=['PUT'])
@@ -517,6 +519,10 @@ def getKey(key):
     # don't know if the key actually exists
     # in the kvs
     value = None
+    retrieved = False
+    doesExist = True
+    msg = ""
+    error = ""
 
     # get the shard id of the key
     shardID = hashRing.get_node(key)
@@ -531,29 +537,40 @@ def getKey(key):
     else:
         # by getting the keys shard and looping through the addresses
         shardGroup = shardGroups.get(shardID)
+        shuffle(shardGroup)
         for addressee in shardGroup:
-            if not value:
+            if not retrieved:
                 url = constructURL(addressee, request.path)
                 headers = {"content-type": "application/json"}
                 response = None
                 try:
                     response = requests.get(url, headers, timeout=5)
+                    retrieved = True
                 except:
                     app.logger.info(f"Forward GET request from {socket_address} => {addressee} failed!")
                     pass
 
                 # return the forwarded response back to the client
-                if response and response.json().get('value'):
+                if retrieved:
                     metaDataString = response.json().get('causal-metadata')
                     value = response.json().get('value')
+                    doesExist = response.json().get('doesExist')
+                    error = response.json().get('error')
+                    msg = response.json().get('message')
             else:
                 break
         
-        if value is None:
+        if not retrieved:
             return "Cannot Forward GET!!", NOT_FOUND
         else:
-            returnMsg = existsKeyMessage(metaDataString, "Retrieved successfully", value)
-            return returnMsg, OK
+            rc = response.status_code
+            if rc == OK:
+                returnMsg = existsKeyMessage(metaDataString, msg, value)
+                return returnMsg, rc
+            else:
+                returnMsg = badKeyRequest(doesExist, error, msg)
+                return returnMsg, rc
+                
 
     if value != None:
         returnMsg = existsKeyMessage(json.dumps(vectorClock), "Retrieved successfully", value)
@@ -571,6 +588,9 @@ def deleteKey(key):
     metaDataString = data['causal-metadata']
     msg = None
     id = None
+    doesExist = True
+    retrieved = False
+    error = ""
 
     # get the shard id of the key
     shardID = hashRing.get_node(key)
@@ -579,18 +599,19 @@ def deleteKey(key):
     if routing.get(socket_address) != shardID:
         shardGroup = shardGroups.get(shardID)
         response = None
-
+        shuffle(shardGroup)
         for addressee in shardGroup:
-            if not msg:
+            if not retrieved:
                 url = constructURL(addressee, request.path)
                 headers = {"content-type": "application/json"}
                 try:
                     response = requests.delete(url, data=json.dumps({"causal-metadata": metaDataString}), headers=headers, timeout = 5)
+                    retrieved = True
                 except:
                     app.logger.info(f"Forward DELETE request from {socket_address} => {addressee} failed!")
                     pass
             
-                if response:
+                if retrieved:
                     msg = response.json().get('message')
                     id = response.json().get('shard-id')
                     metaDataString = response.json().get('causal-metadata')
@@ -599,14 +620,14 @@ def deleteKey(key):
             else:
                 break
 
-        if msg is None:
+        if not retrieved:
             return "Cannot Forward!!", NOT_FOUND
         else:
-            sc = response.status_code
-            if sc == OK:
-                return putKeyMessage(msg, metaDataString, id), sc
+            rc = response.status_code
+            if rc == OK:
+                return putKeyMessage(msg, metaDataString, id), rc
             else:
-                return badKeyRequest(doesExist, msg, error), sc
+                return badKeyRequest(doesExist, error, msg), rc
     # else if the node does belong to the shard, we start the operation
     else:
         if metaDataString == "":
@@ -729,6 +750,7 @@ def putKey(key):
     metaDataString = data['causal-metadata']
     msg = None
     id = None
+    retrieved = False
 
     # check invalid request
     if not value:
@@ -743,18 +765,20 @@ def putKey(key):
         # by getting the proper shard and looping through the addresses
         shardGroup = shardGroups.get(shardID)
         response = None
+        shuffle(shardGroup)
         for addressee in shardGroup:
-            if not msg:
+            if not retrieved:
                 url = constructURL(addressee, request.path)
                 headers = {"content-type": "application/json"}
                 try:
                     response = requests.put(url, data=json.dumps({"value": value, "causal-metadata": metaDataString}), headers=headers, timeout = 5)
+                    retrieved = True
                 except:
                     app.logger.info(f"Forward PUT request from {socket_address} => {addressee} failed!")
                     pass
                 
                 # return the forwarded messages response to the client
-                if response:
+                if retrieved:
                     msg = response.json().get('message')
                     metaDataString = response.json().get('causal-metadata')
                     id = response.json().get('shard-id')
@@ -762,7 +786,7 @@ def putKey(key):
                 break
 
         # messages that are failed to be forwarded are simply rejected
-        if msg is None:
+        if not retrieved:
             return "Cannot Forward!!", NOT_FOUND
         else:
             returnMsg = putKeyMessage(msg, metaDataString, id)
@@ -790,7 +814,7 @@ def putKey(key):
                         continue
                     upToDate = max(receivedVectorClock[socket])
                     kvPair = receivedVectorClock[socket][upToDate]
-                    print(kvPair)
+                    # print(kvPair)
                     sys.stdout.flush()
                     keys.update(kvPair)
 
