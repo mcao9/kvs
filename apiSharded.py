@@ -544,7 +544,7 @@ def getKey(key):
                 headers = {"content-type": "application/json"}
                 response = None
                 try:
-                    response = requests.get(url, headers, timeout=5)
+                    response = requests.get(url, headers, timeout=10)
                     retrieved = True
                 except:
                     app.logger.info(f"Forward GET request from {socket_address} => {addressee} failed!")
@@ -605,7 +605,7 @@ def deleteKey(key):
                 url = constructURL(addressee, request.path)
                 headers = {"content-type": "application/json"}
                 try:
-                    response = requests.delete(url, data=json.dumps({"causal-metadata": metaDataString}), headers=headers, timeout = 5)
+                    response = requests.delete(url, data=json.dumps({"causal-metadata": metaDataString}), headers=headers, timeout=5)
                     retrieved = True
                 except:
                     app.logger.info(f"Forward DELETE request from {socket_address} => {addressee} failed!")
@@ -771,7 +771,7 @@ def putKey(key):
                 url = constructURL(addressee, request.path)
                 headers = {"content-type": "application/json"}
                 try:
-                    response = requests.put(url, data=json.dumps({"value": value, "causal-metadata": metaDataString}), headers=headers, timeout = 5)
+                    response = requests.put(url, data=json.dumps({"value": value, "causal-metadata": metaDataString}), headers=headers, timeout=5)
                     retrieved = True
                 except:
                     app.logger.info(f"Forward PUT request from {socket_address} => {addressee} failed!")
