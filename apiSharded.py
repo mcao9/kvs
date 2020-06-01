@@ -112,7 +112,11 @@ def validate():
                         if addressee in replicasAlive:
                             app.logger.info(f"Instance not found: {addressee}, deleting now")
                             try:
+                                # remove the replica from the list
                                 replicasAlive.remove(addressee)
+                                # remove the replica from the shard
+                                if addressee in routing:
+                                    shardGroups[routing[addressee]].remove(addressee)
                             except:
                                 pass
                             viewList[addressee] = None
@@ -315,6 +319,7 @@ def deleteView():
     # NOTE: a replica shouldn't delete itself either of course
     if addressToDelete and addressToDelete in replicasAlive and addressToDelete != socket_address:
         replicasAlive.remove(addressToDelete)
+        shardGroups[routing.get(addressToDelete)].remove(addressToDelete)
         viewList[addressToDelete] = None
         returnMsg = deleteMessage(True)
         returnCode = OK
@@ -338,6 +343,8 @@ def putView():
     # we add it, else we return the error msg
     if addressToPut and addressToPut not in replicasAlive:
         replicasAlive.append(addressToPut)
+        if addressToPut in routing:
+            shardGroups[routing[addressToPut]].append(addressToPut)
         viewList[addressToPut] = "alive"
         returnMsg = putMessage(True)
         returnCode = OK
@@ -433,14 +440,6 @@ def addNode(id):
             threading.Thread(target=broadcastAddNode, args=(requestPath, data,)).start()
 
     return "", OK
-
-    # if socket_address in routing:
-    #     shardGroup = shardGroups.get(routing.get(socket_address))
-
-    #     inGroup = addressToPut in shardGroup
-
-    #     if addressToPut not in vectorClock and routing.get(addressToPut) != None and inGroup:
-    #         vectorClock[addressToPut] = {0:{}}
 
 @app.route("/key-value-store-shard/add-member-broadcast/<id>", methods=['PUT'])
 def addNodeBroadcast(id):
@@ -927,6 +926,26 @@ def putKeyBroadcast(key):
         keys[key] = value
         returnMsg = putKeyMessage("Updated successfully", metaDataString, routing.get(socket_address))
         return returnMsg, OK
+
+@app.route("/key-value-store-shard/reshard", methods=['PUT'])
+def reshardKVS():
+    global shard_count
+    data = request.get_json()
+
+    # get data
+    shard_count = data['shard-count']
+    currentShardCount = len(list(shardGroups.keys()))
+
+    nodesPerShard = len(replicasAlive) // shard_count
+
+    if nodesPerShard < 2:
+        returnMsg = shardErrorMessage()
+        return returnMsg, BAD_REQUEST
+
+
+    
+
+    
 
 # helper functions for constructing kv json msgs
 def putKeyMessage(msg, metaDataString, id):
