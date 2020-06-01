@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, redirect
 from flask_script import Manager, Server
 import os
 import sys
+import copy
 import json
 import time
 import requests
@@ -249,9 +250,25 @@ def broadcastPutKey(requestPath, metaDataString, value, shardID):
         url = constructURL(addressee, requestPath)
         headers = {"content-type": "application/json"}
         try:
-            response = requests.put(url, data=json.dumps({"value": value, "causal-metadata": metaDataString}), headers=headers, timeout=0.001)
+            response = requests.put(url, data=json.dumps({"value": value, "causal-metadata": metaDataString}), headers=headers, timeout=5)
         except:
             app.logger.info(f"Broadcast PUT key from {socket_address} => {addressee} failed!")
+            pass
+
+def broadcastDeleteKey(requestPath, metaDataString, shardID):
+
+    shardGroup = shardGroups.get(shardID)
+
+    for addressee in shardGroup:
+        response = None
+        if addressee == socket_address:
+            continue
+        url = constructURL(addressee, requestPath)
+        headers = {"content-type": "application/json"}
+        try:
+            response = requests.delete(url, data=json.dumps({"causal-metadata": metaDataString}), headers=headers, timeout=5)
+        except:
+            app.logger.info(f"Broadcast delete key from {socket_address} => {addressee} failed!")
             pass
 
 @app.route("/")
@@ -309,6 +326,9 @@ def deleteView():
 def putView():
     data = request.get_json()
     addressToPut = data["socket-address"]
+
+    if addressToPut not in vectorClock:
+        vectorClock[addressToPut] = {0:{}}
 
     returnMsg = ""
     returnCode = None
@@ -517,7 +537,7 @@ def getKey(key):
                 headers = {"content-type": "application/json"}
                 response = None
                 try:
-                    response = requests.get(url, headers, timeout=TIME_OUT)
+                    response = requests.get(url, headers, timeout=5)
                 except:
                     app.logger.info(f"Forward GET request from {socket_address} => {addressee} failed!")
                     pass
@@ -544,11 +564,159 @@ def getKey(key):
 
 @app.route("/key-value-store/<key>", methods=['DELETE'])
 def deleteKey(key):
-    pass
+    global vectorClock
+    data = request.get_json()
+
+    # get data
+    metaDataString = data['causal-metadata']
+    msg = None
+    id = None
+
+    # get the shard id of the key
+    shardID = hashRing.get_node(key)
+
+    # if the current node does not belong to the shard, we forward the request
+    if routing.get(socket_address) != shardID:
+        shardGroup = shardGroups.get(shardID)
+        response = None
+
+        for addressee in shardGroup:
+            if not msg:
+                url = constructURL(addressee, request.path)
+                headers = {"content-type": "application/json"}
+                try:
+                    response = requests.delete(url, data=json.dumps({"causal-metadata": metaDataString}), headers=headers, timeout = 5)
+                except:
+                    app.logger.info(f"Forward DELETE request from {socket_address} => {addressee} failed!")
+                    pass
+            
+                if response:
+                    msg = response.json().get('message')
+                    id = response.json().get('shard-id')
+                    metaDataString = response.json().get('causal-metadata')
+                    error = response.json().get('error')
+                    doesExist = response.json().get('doesExist')
+            else:
+                break
+
+        if msg is None:
+            return "Cannot Forward!!", NOT_FOUND
+        else:
+            sc = response.status_code
+            if sc == OK:
+                return putKeyMessage(msg, metaDataString, id), sc
+            else:
+                return badKeyRequest(doesExist, msg, error), sc
+    # else if the node does belong to the shard, we start the operation
+    else:
+        if metaDataString == "":
+            app.logger.info("------FIRST DELETE------")
+        else:
+            metaDataString = metaDataString.replace("'", "\"")
+            receivedVectorClock = json.loads(metaDataString)
+            receivedVectorClock = {k: {int(innerKey):v for innerKey, v in receivedVectorClock[k].items()} for k,v in receivedVectorClock.items() }
+
+            biggerClock, concurrent = compareClocks(vectorClock, receivedVectorClock, shardID)
+
+            if vectorClock == biggerClock:
+                pass
+
+            elif receivedVectorClock == biggerClock:
+                for socket in receivedVectorClock.keys():
+                    if routing.get(socket) != shardID:
+                        continue
+                    upToDate = max(receivedVectorClock[socket])
+                    kvPair = receivedVectorClock[socket][upToDate]
+                    keys.update(kvPair)
+
+                vectorClock.update(receivedVectorClock)
+
+            elif concurrent:
+                for socket in receivedVectorClock.keys():
+                    if routing.get(socket) != shardID:
+                        continue
+                    upToDate = max(receivedVectorClock[socket])
+                    localHigh = max(vectorClock[socket])
+                    if upToDate > localHigh:
+                        kvPair = receivedVectorClock[socket][upToDate]
+                        keys.update(kvPair)
+                        vectorClock[socket] = receivedVectorClock.get(socket)
+        
+        # now that causal consistency has been established
+        # we start the actual operation
+
+        # if the key exists in the shard and it hasn't previously 
+        # been deleted
+        if key in keys and keys[key] != None:
+            keys[key] = None
+
+            versions = vectorClock.get(socket_address)
+            merged = {**vectorClock[socket_address][max(versions)], **{key:None}}
+            vectorClock[socket_address].update({(max(versions) + 1): merged })
+
+            metaDataString = json.dumps(vectorClock)
+
+            requestPath = "/delete-key-broadcast/" + key
+
+            with dataLock:
+                threading.Thread(target = broadcastDeleteKey, args=(requestPath, metaDataString, shardID,)).start()
+            
+            returnMsg = putKeyMessage("Deleted successfully", metaDataString, shardID)
+            return returnMsg, OK
+        else:
+            returnMsg = badKeyRequest(False, "Key does not exist", "Error in DELETE")
+            return returnMsg, NOT_FOUND
+        
 
 @app.route("/delete-key-broadcast/<key>", methods=['DELETE'])
 def deleteKeyBroadcast(key):
-    pass
+    global vectorClock
+    data = request.get_json()
+
+    # get data
+    metaDataString = data['causal-metadata']
+
+    # verify causal consistency
+    if metaDataString != "":
+        metaDataString = metaDataString.replace("'", "\"")
+        receivedVectorClock = json.loads(metaDataString)
+        receivedVectorClock = {k: {int(innerKey):v for innerKey, v in receivedVectorClock[k].items()} for k,v in receivedVectorClock.items() }
+
+        biggerClock, concurrent = compareClocks(vectorClock, receivedVectorClock, routing.get(socket_address))
+
+        if vectorClock == biggerClock:
+            pass
+
+        elif receivedVectorClock == biggerClock:
+            for socket in receivedVectorClock.keys():
+                if routing.get(socket) != routing.get(socket_address):
+                    continue
+                upToDate = max(receivedVectorClock[socket])
+                kvPair = receivedVectorClock[socket][upToDate]
+                keys.update(kvPair)
+
+            vectorClock.update(receivedVectorClock)
+
+        elif concurrent:
+            for socket in receivedVectorClock.keys():
+                if routing.get(socket) != routing.get(socket_address):
+                    continue
+                upToDate = max(receivedVectorClock[socket])
+                localHigh = max(vectorClock[socket])
+                if upToDate > localHigh:
+                    kvPair = receivedVectorClock[socket][upToDate]
+                    keys.update(kvPair)
+                    vectorClock[socket] = receivedVectorClock.get(socket)
+    
+    metaDataString = json.dumps(vectorClock)
+
+    if key in keys or keys[key] != None:
+        keys[key] = None
+        returnMsg = putKeyMessage("Deleted successfully", metaDataString, routing.get(socket_address))
+        return returnMsg, OK
+    else:
+        returnMsg = badKeyRequest(False, "Key does not exist", "Error in DELETE")
+        return returnMsg, NOT_FOUND
 
 @app.route("/key-value-store/<key>", methods=['PUT'])
 def putKey(key):
@@ -560,6 +728,7 @@ def putKey(key):
     value = data['value']
     metaDataString = data['causal-metadata']
     msg = None
+    id = None
 
     # check invalid request
     if not value:
@@ -588,6 +757,7 @@ def putKey(key):
                 if response:
                     msg = response.json().get('message')
                     metaDataString = response.json().get('causal-metadata')
+                    id = response.json().get('shard-id')
             else:
                 break
 
@@ -595,7 +765,7 @@ def putKey(key):
         if msg is None:
             return "Cannot Forward!!", NOT_FOUND
         else:
-            returnMsg = putKeyMessage(msg, metaDataString)
+            returnMsg = putKeyMessage(msg, metaDataString, id)
             return returnMsg, response.status_code
     # else if the node does belong to the shard, we start the operation
     else:  
@@ -607,7 +777,7 @@ def putKey(key):
             metaDataString = metaDataString.replace("'", "\"")
             receivedVectorClock = json.loads(metaDataString)
             receivedVectorClock = {k: {int(innerKey):v for innerKey, v in receivedVectorClock[k].items()} for k,v in receivedVectorClock.items() }
-            biggerClock, concurrent = compareClocks(vectorClock, receivedVectorClock)
+            biggerClock, concurrent = compareClocks(vectorClock, receivedVectorClock, shardID)
 
             # if the local clock is strictly bigger
             if vectorClock == biggerClock:
@@ -616,6 +786,8 @@ def putKey(key):
             elif receivedVectorClock == biggerClock:
                 # merge clocks
                 for socket in receivedVectorClock.keys():
+                    if routing.get(socket) != shardID:
+                        continue
                     upToDate = max(receivedVectorClock[socket])
                     kvPair = receivedVectorClock[socket][upToDate]
                     print(kvPair)
@@ -628,6 +800,8 @@ def putKey(key):
             elif concurrent:
                 # merge clocks and store based on highest value
                 for socket in receivedVectorClock.keys():
+                    if routing.get(socket) != shardID:
+                        continue
                     upToDate = max(receivedVectorClock[socket])
                     localHigh = max(vectorClock[socket])
                     if upToDate > localHigh:
@@ -659,10 +833,10 @@ def putKey(key):
         
         # and output the appropriate return message
         if newKey:
-            returnMsg = putKeyMessage("Added successfully", metaDataString)
+            returnMsg = putKeyMessage("Added successfully", metaDataString, shardID)
             return returnMsg, CREATED
         else:
-            returnMsg = putKeyMessage("Updated successfully", metaDataString)
+            returnMsg = putKeyMessage("Updated successfully", metaDataString, shardID)
             return returnMsg, OK
 
 @app.route("/key-broadcast/<key>", methods=['PUT'])
@@ -689,7 +863,7 @@ def putKeyBroadcast(key):
         receivedVectorClock = json.loads(metaDataString)
         receivedVectorClock = {k: {int(innerKey):v for innerKey, v in receivedVectorClock[k].items()} for k,v in receivedVectorClock.items() }
 
-        biggerClock, concurrent = compareClocks(vectorClock, receivedVectorClock)
+        biggerClock, concurrent = compareClocks(vectorClock, receivedVectorClock, routing.get(socket_address))
 
         # if the local clock is strictly bigger which should NEVER happen since its a broadcast
         if vectorClock == biggerClock:
@@ -697,6 +871,8 @@ def putKeyBroadcast(key):
         # if the recieved clock is stricly bigger
         elif receivedVectorClock == biggerClock:
             for socket in receivedVectorClock.keys():
+                if routing.get(socket) != routing.get(socket_address):
+                    continue
                 upToDate = max(receivedVectorClock[socket])
                 kvPair = receivedVectorClock[socket][upToDate]
                 keys.update(kvPair)
@@ -705,6 +881,8 @@ def putKeyBroadcast(key):
             
         elif concurrent:
             for socket in receivedVectorClock.keys():
+                if routing.get(socket) != routing.get(socket_address):
+                    continue
                 upToDate = max(receivedVectorClock[socket])
                 localHigh = max(vectorClock[socket])
                 if upToDate > localHigh:
@@ -718,19 +896,20 @@ def putKeyBroadcast(key):
     if key not in keys or keys[key] == None:
         # perform operation
         keys[key] = value
-        returnMsg = putKeyMessage("Added successfully", metaDataString)
+        returnMsg = putKeyMessage("Added successfully", metaDataString, routing.get(socket_address))
         return returnMsg, CREATED
     else:
         # else update the existing key's value
         keys[key] = value
-        returnMsg = putKeyMessage("Updated successfully", metaDataString)
+        returnMsg = putKeyMessage("Updated successfully", metaDataString, routing.get(socket_address))
         return returnMsg, OK
 
 # helper functions for constructing kv json msgs
-def putKeyMessage(msg, metaDataString):
+def putKeyMessage(msg, metaDataString, id):
     retmsg = jsonify({
         "message":msg,
-        "causal-metadata":metaDataString
+        "causal-metadata":metaDataString,
+        "shard-id":id
     })
     return trimMsg(retmsg)
 
@@ -902,13 +1081,24 @@ def stringize(dataList):
     dataString = ",".join(dataList)
     return dataString
 
-def compareClocks(clock1, clock2):
+def compareClocks(clock1, clock2, shardID):
     # vector clock comparison
     # 1. for all indexes VC(A) <= VC(B)
     # 2. and VC(A) != VC(B)
-    condition1 = list(map(lambda socket: max(clock1.get(socket)) <= max(clock2.get(socket)), clock1))
-    condition2 = list(map(lambda socket: max(clock1.get(socket)) != max(clock2.get(socket)), clock1))
-    condition3 = list(map(lambda socket: max(clock1.get(socket)) >= max(clock2.get(socket)), clock1))
+
+    shardGroup = shardGroups.get(shardID)
+
+    copyClock1 = copy.deepcopy(clock1)
+    copyClock2 = copy.deepcopy(clock2)
+
+    for socket in clock1:
+        if socket not in shardGroup:
+            del copyClock1[socket]
+            del copyClock2[socket]
+
+    condition1 = list(map(lambda socket: max(copyClock1.get(socket)) <= max(copyClock2.get(socket)), copyClock1))
+    condition2 = list(map(lambda socket: max(copyClock1.get(socket)) != max(copyClock2.get(socket)), copyClock1))
+    condition3 = list(map(lambda socket: max(copyClock1.get(socket)) >= max(copyClock2.get(socket)), copyClock1))
     concurrent = False
 
     c1 = all(bool == True for bool in condition1)
@@ -1001,7 +1191,7 @@ if __name__ == "__main__":
         # only populate vector clocks of the same shard 
         shardGroup = shardGroups.get(routing.get(socket_address))
         hashRing = HashRing(nodes=list(shardGroups.keys()))
-        for replica in shardGroup:
+        for replica in replicasAlive:
             vectorClock[replica] = {0:{}}
 
         print("DISTRIBUTION", hashRing.distribution)
