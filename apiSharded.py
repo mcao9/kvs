@@ -6,7 +6,7 @@ import copy
 import json
 import time
 import requests
-from random import shuffle
+from random import shuffle, choice
 from uhashring import HashRing
 import hashlib
 import threading
@@ -930,7 +930,18 @@ def putKeyBroadcast(key):
 @app.route("/key-value-store-shard/reshard", methods=['PUT'])
 def reshardKVS():
     global shard_count
+    global shardGroups
+
+    valid = False
+
     data = request.get_json()
+
+    # shard redistribution
+    resharded =  {}
+    extraNodes = []
+
+    # get the shards
+    items = shardGroups.items()
 
     # get data
     shard_count = data['shard-count']
@@ -940,12 +951,198 @@ def reshardKVS():
 
     if nodesPerShard < 2:
         returnMsg = shardErrorMessage()
-        return returnMsg, BAD_REQUEST
+        return returnMsg, BAD_REQUEST 
+
+    # if the shard count is reduced
+    if shard_count < currentShardCount:
+
+        original = copy.deepcopy(shardGroups)
+
+        # delete the smallest shard and move its addresses
+        # to the rest
+        while(currentShardCount - shard_count != 0):
+            smallestShard = getSmallestShard(items)
+
+            for node in shardGroups[smallestShard]:
+                routing[node] = None
+
+            extraNodes += shardGroups[smallestShard]
+            del shardGroups[smallestShard]
+            hashRing.remove_node(smallestShard)
+            currentShardCount-=1
+
+        for shard in shardGroups.items():
+            if len(shard[1]) < 2:
+                while len(shard[1]) < 2:
+                    if extraNodes:
+                        node = extraNodes.pop()
+                        shardGroups[shard[0]].append(extraNodes.pop())
+                        routing[node] = shard[0]
+                    if not extraNodes:
+                        break
+
+        while extraNodes:
+            node = extraNodes.pop()
+            if routing[node]:
+                shardGroups[routing[node]].append(node)
+            else:
+                randomShard = choice(list(shardGroups.keys()))
+                shardGroups[randomShard].append(node)
+                routing[node] = randomShard
+        
+        valid = verifyShardLength(shardGroups.values())
+
+        if not valid:
+            shardGroups = original
 
 
-    
 
-    
+    # if the shard count has increased
+    elif shard_count > currentShardCount:
+        # redistribute addresses, while maintaining
+        # 2 minimum nodes in each shard
+
+        # transfer shardID's to new distribution
+        for shardID in shardGroups:
+            resharded[shardID] = []
+
+        # add the new shard ID's that are required
+        if shard_count > len(items):
+            # required shard_count - previous shard_count
+            numAddIDs = shard_count - len(items)
+            for _ in range(numAddIDs):
+                # add it
+                newID = max(resharded.keys()) + 1
+                resharded[newID] = []
+                hashRing.add_node(newID)
+
+        # transfer 2 nodes of each shard from the previous
+        # shard distribution to reduce key transfers
+        for shard in shardGroups.keys():
+            shardGroup = shardGroups.get(shard)
+            for i in range(len(shardGroup)):
+                # if the length of the shard has already satisfied'
+                # the 2 node requirement...
+                if len(resharded[shard]) == 2:
+                    # append it to a list of extra nodes
+                    extraNodes.append(shardGroup[i])
+                else:
+                    # else, try to reach the requirement
+                    resharded[shard].append(shardGroup[i])
+
+        # fulfill any shards that are not fault tolerant
+        # using the extra nodes
+        for shard in resharded.items():
+            if len(shard[1]) < 2:
+                while len(shard[1]) < 2:
+                    if extraNodes:
+                        exnode = extraNodes.pop()
+                        resharded[shard[0]].append(exnode)
+                        routing[exnode] = shard[0]
+                    if not extraNodes:
+                        break
+
+        # assign any extraneous nodes
+        # prioritized by their original shard ID/group
+        # else, assign at random
+        while extraNodes:
+            node = extraNodes.pop()
+            if node in routing:
+                resharded[routing[node]].append(node)
+            else:
+                randomShard = choice(resharded.keys())
+                resharded[randomShard].append(node)
+                routing[node] = randomShard
+
+        # validate fault tolerancy
+        valid = verifyShardLength(resharded.values())
+
+        if valid:
+            # reassign the shards to the new distribution
+            shardGroups = resharded
+    else:
+        valid = verifyShardLength(shardGroups.values())
+        if not valid:
+            for shardID in shardGroups:
+                resharded[shardID] = []
+
+            for shard in shardGroups.keys():
+                shardGroup = shardGroups.get(shard)
+                for i in range(len(shardGroup)):
+                    # if the length of the shard has already satisfied'
+                    # the 2 node requirement...
+                    if len(resharded[shard]) == 2:
+                        # append it to a list of extra nodes
+                        extraNodes.append(shardGroup[i])
+                    else:
+                        # else, try to reach the requirement
+                        resharded[shard].append(shardGroup[i])
+
+            for shard in resharded.items():
+                if len(shard[1]) < 2:
+                    while len(shard[1]) < 2:
+                        if extraNodes:
+                            exnode = extraNodes.pop()
+                            resharded[shard[0]].append(exnode)
+                            routing[exnode] = shard[0]
+                        if not extraNodes:
+                            break
+
+            while extraNodes:
+                node = extraNodes.pop()
+                if node in routing:
+                    resharded[routing[node]].append(node)
+                else:
+                    randomShard = choice(resharded.keys())
+                    resharded[randomShard].append(node)
+                    routing[node] = randomShard
+
+            # validate fault tolerancy
+            valid = verifyShardLength(resharded.values())
+
+            if valid:
+                # reassign the shards to the new distribution
+                shardGroups = resharded
+
+    # if the redistribution is successfull
+    if valid:
+        # TODO:
+        # we have to redistribute the keys
+        for key in keys.copy():
+            shard = hashRing.get_node(key)
+            if socket_address in shard:
+                continue
+            else:
+                del keys[key]
+                # broadcast the put key to assigned shard
+                
+        # we have to change the shard distribution behavior
+        # to be consistent among nodes
+
+        # we have to broadcast the new shard distribution
+        
+
+
+        returnMsg = reshardSuccessfull()
+        return returnMsg, OK
+    else:
+        returnMsg = shardErrorMessage()
+        return returnMsg, BAD_REQUEST 
+
+def getSmallestShard(items):
+    targetShard = None
+    minShard = float('inf')
+    for shard in items:
+        shardKey = shard[0]
+        shardNodes = shard[1]
+        if len(shardNodes) < minShard:
+            targetShard = shardKey
+            minShard = len(shardNodes)
+
+    return targetShard
+
+def verifyShardLength(values):
+    return all(b == True for b in list(map(lambda x: len(x) >= shard_count, values)))
 
 # helper functions for constructing kv json msgs
 def putKeyMessage(msg, metaDataString, id):
@@ -1072,6 +1269,12 @@ def shardErrorMessage():
     })
     return trimMsg(retmsg)
 
+def reshardSuccessfull():
+    retmsg = jsonify({
+        "message":"Resharding done successfully"
+    })
+    return trimMsg(retmsg)
+
 def keyCountMessage(numKeys):
     retmsg = jsonify({
         "message":"Key Count retrieved successfully",
@@ -1157,6 +1360,9 @@ def compareClocks(clock1, clock2, shardID):
         return {}, concurrent
 
     return {}, False
+
+def verifyShardLength(values):
+    return all(b == True for b in list(map(lambda x: len(x) >= 2, values)))
 
 # messages for console
 def consoleMessages(sleep=None):
