@@ -393,6 +393,9 @@ def getShardKeyCount(id):
     shardGroup = shardGroups.get(int(id))
     numKeys = None
 
+    print("Group!!!!!!!!!!!!!!!!!!",shardGroup)
+    sys.stdout.flush()
+
     # if the current socket address is part of the shard,
     # we simply get the number of items in the key dict
     if socket_address in shardGroup:
@@ -417,7 +420,7 @@ def getShardKeyCount(id):
                 if response:
                     numKeys = int(response.json().get('keycount'))
         
-    if not numKeys:
+    if numKeys == None:
         app.logger.info(f"All replicas of shard {id} are down!")
         return "", NOT_FOUND
 
@@ -987,6 +990,9 @@ def reshardKVS():
     # if the shard count is reduced
     if shard_count < currentShardCount:
 
+        print("CURRENT DISTRIBUTION", shardGroups)
+        sys.stdout.flush()
+
         # delete the smallest shard and move its addresses
         # to the rest
         while(currentShardCount - shard_count != 0):
@@ -1000,7 +1006,14 @@ def reshardKVS():
             hashRing.remove_node(smallestShard)
             currentShardCount-=1
 
+        print("REDUCED SHARDS", shardGroups)
+        print("EXTRA NODES", extraNodes)
+        sys.stdout.flush()
+
         extraNodes.sort()
+
+        print("SORTING EXTRA NODES", extraNodes)
+        sys.stdout.flush()
 
         for shard in shardGroups.items():
             if len(shard[1]) < 2:
@@ -1012,6 +1025,10 @@ def reshardKVS():
                     if not extraNodes:
                         break
 
+
+        print("FULFILLING FAULT TOLERANT", resharded, "EXTRA NODES", extraNodes)
+        sys.stdout.flush()
+
         while extraNodes:
             node = extraNodes.pop()
             if routing[node]:
@@ -1021,9 +1038,15 @@ def reshardKVS():
                 shardGroups[hashShard].append(node)
                 routing[node] = hashShard
 
+        print("USING EXTRA NODES", resharded)
+        sys.stdout.flush()
+
         for shardID in shardGroups.keys():
             shardGroups[shardID].sort()
         
+        print("SORTING RESHARDED", resharded)
+        sys.stdout.flush()
+
         valid = verifyShardLength(shardGroups.values())
 
         if not valid:
@@ -1129,8 +1152,14 @@ def reshardKVS():
     else:
         valid = verifyShardLength(shardGroups.values())
         if not valid:
+
+            print("CURRENT DISTRIBUTION", shardGroups)
+            sys.stdout.flush()
+
             for shardID in shardGroups:
                 resharded[shardID] = []
+                print("EXISTING ID", resharded)
+                sys.stdout.flush()
 
             for shard in shardGroups.keys():
                 shardGroup = shardGroups.get(shard)
@@ -1144,7 +1173,16 @@ def reshardKVS():
                         # else, try to reach the requirement
                         resharded[shard].append(shardGroup[i])
 
+            print("TAKE BASE 2", resharded)
+            sys.stdout.flush()
+
+            print("EXTRA NODES", extraNodes)
+            sys.stdout.flush()
+
             extraNodes.sort()
+
+            print("SORTING EXTRA NODES", extraNodes)
+            sys.stdout.flush()
 
             for shard in resharded.items():
                 if len(shard[1]) < 2:
@@ -1156,6 +1194,9 @@ def reshardKVS():
                         if not extraNodes:
                             break
 
+            print("FULFILLING FAULT TOLERANT", resharded, "EXTRA NODES", extraNodes)
+            sys.stdout.flush()
+
             while extraNodes:
                 node = extraNodes.pop()
                 if node in routing:
@@ -1165,8 +1206,14 @@ def reshardKVS():
                     shardGroups[hashShard].append(node)
                     routing[node] = hashShard
 
+            print("USING EXTRA NODES", resharded)
+            sys.stdout.flush()
+
             for shardID in resharded.keys():
                 resharded[shardID].sort()
+
+            print("SORTING RESHARDED", resharded)
+            sys.stdout.flush()
 
             # validate fault tolerancy
             valid = verifyShardLength(resharded.values())
@@ -1186,15 +1233,19 @@ def reshardKVS():
             sys.stdout.flush()
             copyKeys = copy.deepcopy(keys)
 
+            if "10.10.0.3:8085" == socket_address:
+                print("TESTING, 1, ,2 ,3", shardGroups.get(routing.get(socket_address)))
+
             for key in copyKeys:
+                value = keys[key]
                 shardID = hashRing.get_node(key)
-                if socket_address in shardGroups.get(shardID):
-                    continue
-                else:
-                    requestPath = "/key-broadcast/" + key
-                    metaDataString = ""
-                    threading.Thread(target = broadcastPutKey, args=(requestPath, metaDataString, keys[key], shardID)).start()
+                if socket_address not in shardGroups.get(shardID):
                     del keys[key]
+
+                requestPath = "/key-broadcast/" + key
+                metaDataString = ""
+                with dataLock:
+                    threading.Thread(target = broadcastPutKey, args=(requestPath, metaDataString, value, shardID)).start()
 
         returnMsg = reshardSuccessfull()
         return returnMsg, OK

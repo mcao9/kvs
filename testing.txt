@@ -1,10 +1,10 @@
 # testing commands
-docker run -p 8082:8085 --net=mynet --ip=10.10.0.2 --name="node1" -e SOCKET_ADDRESS="10.10.0.2:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="2" --rm assignment4-img
-docker run -p 8083:8085 --net=mynet --ip=10.10.0.3 --name="node2" -e SOCKET_ADDRESS="10.10.0.3:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="2" --rm assignment4-img
-docker run -p 8084:8085 --net=mynet --ip=10.10.0.4 --name="node3" -e SOCKET_ADDRESS="10.10.0.4:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="2" --rm assignment4-img
-docker run -p 8086:8085 --net=mynet --ip=10.10.0.5 --name="node4" -e SOCKET_ADDRESS="10.10.0.5:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="2" --rm assignment4-img
-docker run -p 8087:8085 --net=mynet --ip=10.10.0.6 --name="node5" -e SOCKET_ADDRESS="10.10.0.6:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="2" --rm assignment4-img
-docker run -p 8088:8085 --net=mynet --ip=10.10.0.7 --name="node6" -e SOCKET_ADDRESS="10.10.0.7:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="2" --rm assignment4-img
+docker run -p 8082:8085 --net=mynet --ip=10.10.0.2 --name="node1" -e SOCKET_ADDRESS="10.10.0.2:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="3" --rm assignment4-img
+docker run -p 8083:8085 --net=mynet --ip=10.10.0.3 --name="node2" -e SOCKET_ADDRESS="10.10.0.3:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="3" --rm assignment4-img
+docker run -p 8084:8085 --net=mynet --ip=10.10.0.4 --name="node3" -e SOCKET_ADDRESS="10.10.0.4:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="3" --rm assignment4-img
+docker run -p 8086:8085 --net=mynet --ip=10.10.0.5 --name="node4" -e SOCKET_ADDRESS="10.10.0.5:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="3" --rm assignment4-img
+docker run -p 8087:8085 --net=mynet --ip=10.10.0.6 --name="node5" -e SOCKET_ADDRESS="10.10.0.6:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="3" --rm assignment4-img
+docker run -p 8088:8085 --net=mynet --ip=10.10.0.7 --name="node6" -e SOCKET_ADDRESS="10.10.0.7:8085" -e VIEW="10.10.0.2:8085,10.10.0.3:8085,10.10.0.4:8085,10.10.0.5:8085,10.10.0.6:8085,10.10.0.7:8085" -e SHARD_COUNT="3" --rm assignment4-img
 
 curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-view 
 curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/key-value-store-view 
@@ -80,17 +80,17 @@ curl --request GET --header "Content-Type: application/json" --write-out "\n%{ht
 #Testing getShardKeyCount()
 
 curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-shard/shard-id-key-count/1 &&\
-curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-shard/shard-id-key-count/0 &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.2:8085/key-value-store-shard/shard-id-key-count/2 &&\
 curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/key-value-store-shard/shard-id-key-count/1 &&\
-curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/key-value-store-shard/shard-id-key-count/0 &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.3:8085/key-value-store-shard/shard-id-key-count/2 &&\
 curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/key-value-store-shard/shard-id-key-count/1 &&\
-curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/key-value-store-shard/shard-id-key-count/0 &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.4:8085/key-value-store-shard/shard-id-key-count/2 &&\
 curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/key-value-store-shard/shard-id-key-count/1 &&\
-curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/key-value-store-shard/shard-id-key-count/0 &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.5:8085/key-value-store-shard/shard-id-key-count/2 &&\
 curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/key-value-store-shard/shard-id-key-count/1 &&\
-curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/key-value-store-shard/shard-id-key-count/0 &&\
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.6:8085/key-value-store-shard/shard-id-key-count/2 &&\
 curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/key-value-store-shard/shard-id-key-count/1 &&\
-curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/key-value-store-shard/shard-id-key-count/0 
+curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.7:8085/key-value-store-shard/shard-id-key-count/2 
 
 curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.8:8085/key-value-store-shard/shard-id-key-count/0 
 curl --request GET --header "Content-Type: application/json" --write-out "\n%{http_code}\n" http://10.10.0.9:8085/key-value-store-shard/shard-id-key-count/0 
