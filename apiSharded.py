@@ -272,7 +272,7 @@ def broadcastDeleteKey(requestPath, metaDataString, shardID):
         url = constructURL(addressee, requestPath)
         headers = {"content-type": "application/json"}
         try:
-            response = requests.delete(url, data=json.dumps({"causal-metadata": metaDataString}), headers=headers, timeout=5)
+            response = requests.delete(url, data=json.dumps({"causal-metadata": metaDataString}), headers=headers, timeout=10)
         except:
             app.logger.info(f"Broadcast delete key from {socket_address} => {addressee} failed!")
             pass
@@ -601,6 +601,7 @@ def getKey(key):
 @app.route("/key-value-store/<key>", methods=['DELETE'])
 def deleteKey(key):
     global vectorClock
+    global keys
     data = request.get_json()
 
     # get data
@@ -614,9 +615,13 @@ def deleteKey(key):
     # get the shard id of the key
     shardID = hashRing.get_node(key)
 
+    print("SHARD THAT NEEDS TO DELETE KEY", key, "is", shardID)
+
     # if the current node does not belong to the shard, we forward the request
     if routing.get(socket_address) != shardID:
         shardGroup = shardGroups.get(shardID)
+        print("FORWARDING", key, "TO SHARD", shardID, ":", shardGroups.get(shardID))
+        sys.stdout.flush()
         response = None
         shuffle(shardGroup)
         for addressee in shardGroup:
@@ -624,8 +629,12 @@ def deleteKey(key):
                 url = constructURL(addressee, request.path)
                 headers = {"content-type": "application/json"}
                 try:
-                    response = requests.delete(url, data=json.dumps({"causal-metadata": metaDataString}), headers=headers, timeout=5)
+                    print("SENDING", key,  "TO", addressee)
+                    sys.stdout.flush()
+                    response = requests.delete(url, data=json.dumps(data), headers=headers, timeout=10)
                     retrieved = True
+                    print("FORWARD COMPLETED", retrieved)
+                    sys.stdout.flush()
                 except:
                     app.logger.info(f"Forward DELETE request from {socket_address} => {addressee} failed!")
                     pass
@@ -649,6 +658,8 @@ def deleteKey(key):
                 return badKeyRequest(doesExist, error, msg), rc
     # else if the node does belong to the shard, we start the operation
     else:
+        print("SHARD CORRECT", shardID, ":", shardGroups.get(shardID), "FOR KEY", key)
+        sys.stdout.flush()
         if metaDataString == "":
             app.logger.info("------FIRST DELETE------")
         else:
@@ -667,7 +678,9 @@ def deleteKey(key):
                         continue
                     upToDate = max(receivedVectorClock[socket])
                     kvPair = receivedVectorClock[socket][upToDate]
-                    keys.update(kvPair)
+                    keys = keepNone(keys, kvPair)
+                    # print("1. CONCURRENCY DETECTED ON", kvPair)
+                    # sys.stdout.flush()
 
                 vectorClock.update(receivedVectorClock)
 
@@ -679,7 +692,9 @@ def deleteKey(key):
                     localHigh = max(vectorClock[socket])
                     if upToDate > localHigh:
                         kvPair = receivedVectorClock[socket][upToDate]
-                        keys.update(kvPair)
+                        keys = keepNone(keys, kvPair)
+                        # print("2. CONCURRENCY DETECTED ON", kvPair)
+                        # sys.stdout.flush()
                         vectorClock[socket] = receivedVectorClock.get(socket)
         
         # now that causal consistency has been established
@@ -687,8 +702,12 @@ def deleteKey(key):
 
         # if the key exists in the shard and it hasn't previously 
         # been deleted
+
         if key in keys and keys[key] != None:
             keys[key] = None
+
+            print("DELETING", key, "NOW!", ":", keys[key])
+            sys.stdout.flush()
 
             versions = vectorClock.get(socket_address)
             merged = {**vectorClock[socket_address][max(versions)], **{key:None}}
@@ -698,20 +717,38 @@ def deleteKey(key):
 
             requestPath = "/delete-key-broadcast/" + key
 
+            print("BROADCASTING...", key, "to", shardID)
+            sys.stdout.flush()
+
             with dataLock:
                 threading.Thread(target = broadcastDeleteKey, args=(requestPath, metaDataString, shardID,)).start()
             
             returnMsg = putKeyMessage("Deleted successfully", metaDataString, shardID)
             return returnMsg, OK
         else:
+            print("KEY", key, "DOES NOT EXIST!")
+            sys.stdout.flush()
             returnMsg = badKeyRequest(False, "Key does not exist", "Error in DELETE")
-            return returnMsg, NOT_FOUND
-        
+            return returnMsg, NOT_FOUND 
+
+def keepNone(allKeys, violations):
+    newKeys = copy.deepcopy(allKeys)
+    for k, v in allKeys.items():
+        valueOfViolation = violations.get(k)
+        if v == None:
+            continue
+        elif valueOfViolation:
+            newKeys[k] = valueOfViolation 
+    return newKeys
 
 @app.route("/delete-key-broadcast/<key>", methods=['DELETE'])
 def deleteKeyBroadcast(key):
     global vectorClock
+    global keys
     data = request.get_json()
+
+    print("RECEIVED BROADCAST FROM", request.remote_addr, "FOR KEY", key)
+    sys.stdout.flush()
 
     # get data
     metaDataString = data['causal-metadata']
@@ -731,9 +768,12 @@ def deleteKeyBroadcast(key):
             for socket in receivedVectorClock.keys():
                 if routing.get(socket) != routing.get(socket_address):
                     continue
+
                 upToDate = max(receivedVectorClock[socket])
                 kvPair = receivedVectorClock[socket][upToDate]
-                keys.update(kvPair)
+                # print("3. CONCURRENCY DETECTED ON", kvPair, "for address", socket)
+                # sys.stdout.flush()
+                keys = keepNone(keys, kvPair)
 
             vectorClock.update(receivedVectorClock)
 
@@ -745,16 +785,24 @@ def deleteKeyBroadcast(key):
                 localHigh = max(vectorClock[socket])
                 if upToDate > localHigh:
                     kvPair = receivedVectorClock[socket][upToDate]
-                    keys.update(kvPair)
+                    # print("4. CONCURRENCY DETECTED ON", kvPair)
+                    # sys.stdout.flush()
+                    keys = keepNone(keys, kvPair)
                     vectorClock[socket] = receivedVectorClock.get(socket)
     
     metaDataString = json.dumps(vectorClock)
 
+    
+
     if key in keys or keys[key] != None:
         keys[key] = None
+        print("DELETING key", key, keys[key])
+        sys.stdout.flush()
         returnMsg = putKeyMessage("Deleted successfully", metaDataString, routing.get(socket_address))
         return returnMsg, OK
     else:
+        print("KEY", key, "NOT FOUND")
+        sys.stdout.flush()
         returnMsg = badKeyRequest(False, "Key does not exist", "Error in DELETE")
         return returnMsg, NOT_FOUND
 

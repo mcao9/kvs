@@ -5,9 +5,10 @@
 
 - We need to make sure that all replicas contain the same shard configuration. On docker 
 initialization, shard creation is essentially based on the view environmental variable
-as it is guaranteed to be the same for all docker commands. 
+as it is guaranteed to be the same for all docker commands --- verified through discussions with
+course staff
 
---- Shard creation
+--- Initial Shard creation
 
 - We take each address in the view and mod the index with the shard_count. This guarantees 
 that the shards will contain an even distribution of socket addresses. 
@@ -25,4 +26,90 @@ Therefore, when the PUT request is sent through, a broadcast is needed to notify
 shard information from another replica. This guarantees that all nodes have the same shard info.
 
 - The shards keys and vector clock needs to be retrieved from a replica in the shard. This is done
-when the new node is added to the shard. 
+when the new node is added to the shard.
+
+
+
+# Resharding the key-value-store
+--- Redistribution of nodes
+
+- Based on the input shard_count, we need to redistribute the nodes accordingly to meet the 2 
+minimum nodes per shard requirement.
+
+- First, we check if the distribution is possible. VIEW / SHARD_COUNT >= 2. If it is, we continue,
+ else, we return the error message
+
+- The initial node that received the reshard command does the following, and then broadcasts it
+to the view.
+
+    - We have to ensure that all replicas are consistent throughout resharding, including:
+        - The order of the shard group
+        - The nodes in each shard group
+        - The number of shards
+
+- Redistribution can be split into the following 3 categories
+    - The new shard_count changed
+        - Larger: we have to create new shard_count - old shard_count shards and add them to the
+        hash ring
+        - Smaller: we need to delete the shards until the shard constraint is reached and then
+        redistribute the nodes among the resulting shards. We also need to update the hash ring
+        accordingly.
+    - The new shard_count is the same
+        - We just need to guarantee that minimum node constraint, moving shards as necessary.
+
+    - NOTE: Shards are only moved if they need to. We want to limit key movement by moving the 
+    least amount of nodes possible.
+
+--- Redistribution of keys (rebalancing)
+    - Using the hash ring, we need to guarantee that keys are redistributed using the new
+    distribution schema. 
+
+    - We can simply loop through the nodes keyset and redistribute using the hash ring's
+    get_node function. The hash ring guarantees the following, which will also be explained in
+    the key value operations portion of this writeup:
+        - even distribution of keys
+        - each key belongs to exactly one shard
+        - key -> node mappings
+
+    - If the key belongs in the current shard, we do nothing, else we delete it from the store.
+    
+    - We then broadcast it to the appropriate shard to ensure that the key is in the correct
+    store.
+
+
+
+
+# Key-to-shard mappings
+
+--- The consistent hashing library used
+
+- uhashring is a consistent hashing library designed to provide easy to use functions that help
+enable distribution of keys and global key-to-shard mappings.
+
+- as explained above, the library provides the following:
+    - Each key belongs to one shard
+    - Keys are evenly distributed among the shards
+    - global key-to-shard mappings (consistent behavior as deemed by the hash)
+
+- the library provides an object called the Hash Ring, which shards are either added to or removed.
+    - The Hash Ring object then provides the necessary functions to provide mappings. These are the
+    functions we used for the implementation.
+        - get_node(key) provides the node that key is mapped to.
+        - add_node(shard) adds a shard to the Hash Ring object
+        - remove_node(shard) removes a shard from the Hash Ring object
+
+--- The strategy
+
+- PUT and DELETE operations are essentially ran through the get_node() function of the specified
+key. The resulting shard is then produced which leads to two options.
+
+    - If the node that received the message belongs to the shard, we perform the operation. Otherwise
+    we forward the operation to the targeted shard and wait for a response.
+
+    - PUT and DELETE operations are broadcasted as well, for consistency.
+
+- The get_node() function is also used during resharding to potentially reassign keys using the
+the new distribution schema. This enables even distribution (rebalancing) of the keys.
+
+    
+
