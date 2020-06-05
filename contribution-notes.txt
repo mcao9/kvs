@@ -1,2 +1,5 @@
 # contribution notes
+key-value-store: Michael, Randall, Saujanya
+re-sharding: Michael
+testing: Michael. Randall, Saujanya
 
