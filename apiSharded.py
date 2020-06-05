@@ -272,19 +272,22 @@ def broadcastDeleteKey(requestPath, metaDataString, shardID):
         url = constructURL(addressee, requestPath)
         headers = {"content-type": "application/json"}
         try:
-            response = requests.delete(url, data=json.dumps({"causal-metadata": metaDataString}), headers=headers, timeout=10)
+            response = requests.delete(url, data=json.dumps({"causal-metadata": metaDataString}), headers=headers, timeout=5)
         except:
             app.logger.info(f"Broadcast delete key from {socket_address} => {addressee} failed!")
             pass
 
 def broadcastReshard(requestPath, data):
-    for addressee in replicasAlive:
+    print("REPLICAS ALIVE", replicasAlive)
+    global viewList
+    sys.stdout.flush()
+    for addressee in viewList:
         if addressee == socket_address:
             continue
         url = constructURL(addressee, requestPath)
         headers = {"content-type": "application/json"}
         try:
-            response = requests.put(url, data=json.dumps(data), headers=headers, timeout=5)
+            response = requests.put(url, data=json.dumps(data), headers=headers, timeout=TIME_OUT)
         except:
             app.logger.info(f"Broadcast reshard from {socket_address} => {addressee} failed!")
             pass
