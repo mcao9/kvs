@@ -1,9 +1,4 @@
-# CSE138_Assignment4
-CSE 138 Distributed Systems Assignment 4
-
-## Members:
-| Michael Cao (mcao9) | Randall Lowe (rslowe) | Saujanya Mulukutla (smulukut) |
-|---------------------|-----------------------|---------------------------------|
+Fault Tolerant and Sharded Key Value Store
 
 ## Files:
 |                          |
@@ -18,7 +13,5 @@ CSE 138 Distributed Systems Assignment 4
 | README.md                |
 |                          |
 
-## Usage:
-    docker build --tag assignment4-img .
     
 
